@@ -6,6 +6,7 @@ import sys
 import yt_dlp
 from core.enums import State, Priority
 from core.engine import DownloadEngine
+from core.task import DownloadTask
 from core.history import AtomicHistory
 
 HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".sassi_history.json")
