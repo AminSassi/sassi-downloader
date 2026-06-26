@@ -21,7 +21,45 @@ ACCENT = "#58a6ff"
 GREEN = "#3fb950"
 YELLOW = "#d29922"
 RED = "#f85149"
+ORANGE = "#db6d28"
 BORDER = "#30363d"
+BORDER_DONE = "#1a3a2a"
+BORDER_ACTIVE = "#1a2a3a"
+BORDER_RETRY = "#3a3a1a"
+BORDER_FAIL = "#3a1a1a"
+
+STATE_COLORS = {
+    State.DOWNLOADING: ACCENT,
+    State.CONNECTING: ACCENT,
+    State.QUEUED: FG_DIM,
+    State.PAUSED: YELLOW,
+    State.RETRYING: ORANGE,
+    State.COMPLETED: GREEN,
+    State.FAILED: RED,
+    State.CANCELLED: RED,
+}
+
+STATE_BORDERS = {
+    State.DOWNLOADING: BORDER_ACTIVE,
+    State.CONNECTING: BORDER_ACTIVE,
+    State.QUEUED: BORDER,
+    State.PAUSED: BORDER_RETRY,
+    State.RETRYING: BORDER_RETRY,
+    State.COMPLETED: BORDER_DONE,
+    State.FAILED: BORDER_FAIL,
+    State.CANCELLED: BORDER_FAIL,
+}
+
+
+def fmt_size(b):
+    if b < 1024:
+        return f"{b}B"
+    elif b < 1048576:
+        return f"{b / 1024:.0f}KB"
+    elif b < 1073741824:
+        return f"{b / 1048576:.1f}MB"
+    else:
+        return f"{b / 1073741824:.2f}GB"
 
 
 class SassiDownloader:
@@ -44,7 +82,7 @@ class SassiDownloader:
                  fg=FG_BRIGHT, bg=BG).pack(side=tk.LEFT)
         tk.Label(hdr, text="Downloader", font=("Segoe UI", 22),
                  fg=FG_DIM, bg=BG).pack(side=tk.LEFT, padx=(4, 0))
-        tk.Label(hdr, text="v4.1", font=("Segoe UI", 9),
+        tk.Label(hdr, text="v4.2", font=("Segoe UI", 9),
                  fg=FG_DIM, bg=BG).pack(side=tk.LEFT, padx=(8, 0), pady=(6, 0))
 
         card = tk.Frame(self.root, bg=BG_GLASS, highlightbackground=BORDER, highlightthickness=1)
@@ -144,7 +182,14 @@ class SassiDownloader:
     def _refresh_hist(self):
         self.hist_list.delete(0, tk.END)
         for i in self.history.items[:40]:
-            self.hist_list.insert(tk.END, f"  {i['title'][:55]}")
+            size = fmt_size(i.get('size', 0)) if i.get('size', 0) > 0 else ""
+            cs = i.get('checksum', '')[:8]
+            label = f"  {i['title'][:40]}"
+            if size:
+                label += f"  {size}"
+            if cs:
+                label += f"  {cs}"
+            self.hist_list.insert(tk.END, label)
 
     def open_hist(self, e):
         s = self.hist_list.curselection()
@@ -212,14 +257,21 @@ class SassiDownloader:
 
     def _make_card(self, task):
         pri_labels = {Priority.HIGH: "HIGH", Priority.NORMAL: "", Priority.LOW: "LOW"}
-        c = tk.Frame(self.dl_frame, bg=BG_CARD, highlightbackground=BORDER, highlightthickness=1)
-        c.pack(fill=tk.X, padx=2, pady=2, ipady=4)
-        top = tk.Frame(c, bg=BG_CARD)
-        top.pack(fill=tk.X, padx=8, pady=(4, 0))
         pri_text = pri_labels.get(task.priority, "")
         title_text = f"[{pri_text}] Queued..." if pri_text else "Queued..."
+
+        c = tk.Frame(self.dl_frame, bg=BG_CARD, highlightbackground=BORDER, highlightthickness=1)
+        c.pack(fill=tk.X, padx=2, pady=2, ipady=4)
+
+        top = tk.Frame(c, bg=BG_CARD)
+        top.pack(fill=tk.X, padx=8, pady=(4, 0))
+
+        state_dot = tk.Label(top, text="\u25cf", font=("Segoe UI", 8), fg=FG_DIM, bg=BG_CARD)
+        state_dot.pack(side=tk.LEFT, padx=(0, 4))
+
         title = tk.Label(top, text=title_text, font=("Segoe UI", 9), fg=FG, bg=BG_CARD, anchor=tk.W)
         title.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
         ctrl = tk.Frame(top, bg=BG_CARD)
         ctrl.pack(side=tk.RIGHT)
         pause = tk.Button(ctrl, text="\u23f8", font=("Segoe UI", 9), bg=BG_CARD, fg=FG_DIM,
@@ -230,69 +282,112 @@ class SassiDownloader:
                             relief=tk.FLAT, cursor="hand2", width=3,
                             command=lambda: self._cancel_task(task))
         cancel.pack(side=tk.LEFT)
+
         prog = tk.Canvas(c, bg=BORDER, height=3, highlightthickness=0)
         prog.pack(fill=tk.X, padx=8, ipady=0)
         bar = prog.create_rectangle(0, 0, 0, 3, fill=ACCENT, width=0)
+
         info = tk.Label(c, text="Waiting...", font=("Consolas", 8), fg=FG_DIM, bg=BG_CARD, anchor=tk.W)
         info.pack(fill=tk.X, padx=8, pady=(3, 0))
-        return {"frame": c, "title": title, "pause": pause, "cancel": cancel,
+
+        return {"frame": c, "title": title, "state_dot": state_dot,
+                "pause": pause, "cancel": cancel,
                 "prog": prog, "bar": bar, "info": info}
+
+    def _set_state_visuals(self, card, state):
+        color = STATE_COLORS.get(state, FG_DIM)
+        border = STATE_BORDERS.get(state, BORDER)
+        card["state_dot"].config(fg=color)
+        card["frame"].config(highlightbackground=border)
+        if state == State.COMPLETED:
+            card["title"].config(fg=FG_DIM)
+            card["info"].config(fg="#2a6e3f")
+        elif state == State.FAILED or state == State.CANCELLED:
+            card["title"].config(fg=FG_DIM)
+        elif state == State.QUEUED:
+            card["title"].config(fg=FG_DIM)
+        else:
+            card["title"].config(fg=FG)
 
     def _upd_card(self, task):
         card = self.cards.get(task.id)
         if not card:
             return
+
+        self._set_state_visuals(card, task.state)
+
         if task.state == State.PAUSED:
-            card["title"].config(text=f"\u23f8 {task.title[:44] or 'Paused'}")
+            card["title"].config(text=f"{task.title[:44] or 'Paused'}")
             card["info"].config(text="Paused", fg=YELLOW)
             return
+
         if task.state == State.RETRYING:
             ecls = task.error_class.value if task.error_class else ""
-            card["title"].config(text=f"\u21bb Retry {task.retries}/{task.max_retries}")
-            card["info"].config(text=f"{ecls}: {task.error[:40]}", fg=YELLOW)
+            card["title"].config(text=f"Retry {task.retries}/{task.max_retries}")
+            card["info"].config(text=f"{ecls}: {task.error[:40]}", fg=ORANGE)
             return
+
         if task.state == State.CONNECTING:
             card["title"].config(text=f"Connecting... ({task.host})")
-            card["info"].config(text="Detecting server capabilities", fg=FG_DIM)
+            card["info"].config(text="Detecting server capabilities", fg=ACCENT)
             return
+
         pct = task.progress / 100
         w = card["prog"].winfo_width()
         card["prog"].coords(card["bar"], 0, 0, max(w * pct, 2), 3)
+
         if task.title:
             card["title"].config(text=task.title[:48])
+
         parts = [f"{task.progress:.1f}%"]
         if task.speed > 0:
-            parts.append(f"{task.speed / 1024:.0f} KB/s")
+            parts.append(f"{fmt_size(int(task.speed))}/s")
+        if task.filesize > 0 and task.downloaded > 0:
+            remaining = task.filesize - task.downloaded
+            if remaining > 0:
+                parts.append(f"{fmt_size(remaining)} left")
         if task.eta:
             parts.append(task.eta)
-        share = self.engine.bandwidth.get_share(task.id)
-        if share < 0.9:
-            parts.append(f"share:{share:.0%}")
+
         conf = self.engine.server_cache.get_confidence(task.host)
-        if conf < 0.8:
+        if conf < 0.5:
+            parts.append("unstable")
+        elif conf < 0.8:
             parts.append(f"conf:{conf:.0%}")
-        card["info"].config(text="  ·  ".join(parts), fg=FG_DIM)
+
+        share = self.engine.bandwidth.get_share(task.id)
+        if share < 0.5:
+            parts.append(f"share:{share:.0%}")
+
+        card["info"].config(text="  \u00b7  ".join(parts), fg=FG_DIM)
 
     def _done_card(self, task):
         card = self.cards.get(task.id)
         if not card:
             return
+        self._set_state_visuals(card, State.COMPLETED)
+
         w = card["prog"].winfo_width()
         card["prog"].coords(card["bar"], 0, 0, w, 3)
         card["prog"].itemconfig(card["bar"], fill=GREEN)
+
         actual_size = os.path.getsize(task.filename) if os.path.exists(task.filename) else 0
         size_ok, size_msg = self.engine.integrity.validate_file(task.filename, task.filesize)
         chunk_ok, chunk_msg = self.engine.chunk_verifier.validate_completion(task.id, actual_size)
-        cs = self.engine.integrity.compute_checksum(task.filename)[:16] if os.path.exists(task.filename) else ""
+        cs = self.engine.integrity.compute_checksum(task.filename)[:8] if os.path.exists(task.filename) else ""
+
         if not size_ok:
             card["info"].config(text=f"Corrupt: {size_msg}", fg=RED)
-            card["title"].config(text=f"\u2717 {task.title[:46]}")
+            card["title"].config(text=f"{task.title[:46]}")
+            self._set_state_visuals(card, State.FAILED)
         elif not chunk_ok:
             card["info"].config(text=f"Chunk error: {chunk_msg}", fg=RED)
-            card["title"].config(text=f"\u2717 {task.title[:46]}")
+            card["title"].config(text=f"{task.title[:46]}")
+            self._set_state_visuals(card, State.FAILED)
         else:
-            card["info"].config(text=f"Complete \u00b7 {actual_size // 1024}KB \u00b7 {cs}", fg=GREEN)
-            card["title"].config(text=f"\u2713 {task.title[:46]}")
+            card["info"].config(text=f"Done \u00b7 {fmt_size(actual_size)} \u00b7 {cs}", fg="#2a6e3f")
+            card["title"].config(text=f"{task.title[:46]}")
+
         card["pause"].config(state=tk.DISABLED)
         card["cancel"].config(state=tk.DISABLED)
         self.engine.ui_updater.cleanup(task.id)
@@ -304,10 +399,11 @@ class SassiDownloader:
         card = self.cards.get(task.id)
         if not card:
             return
+        self._set_state_visuals(card, State.FAILED)
         card["prog"].itemconfig(card["bar"], fill=RED)
         ecls = task.error_class.value if task.error_class else ""
         card["info"].config(text=f"Failed ({ecls}): {task.error[:50]}", fg=RED)
-        card["title"].config(text=f"\u2717 {task.title[:46] or 'Error'}")
+        card["title"].config(text=f"{task.title[:46] or 'Error'}")
         card["pause"].config(state=tk.DISABLED)
         self.engine.ui_updater.cleanup(task.id)
 
@@ -321,9 +417,10 @@ class SassiDownloader:
         task.cancel()
         card = self.cards.get(task.id)
         if card:
+            self._set_state_visuals(card, State.CANCELLED)
             card["prog"].itemconfig(card["bar"], fill=RED)
             card["info"].config(text="Cancelled", fg=RED)
-            card["title"].config(text="\u2717 Cancelled")
+            card["title"].config(text="Cancelled")
             card["pause"].config(state=tk.DISABLED)
             card["cancel"].config(state=tk.DISABLED)
         self.engine.ui_updater.cleanup(task.id)
