@@ -1,74 +1,53 @@
 # Sassi Downloader
 
-A production-grade download manager with adaptive concurrency, intelligent retry logic, and a clean dark UI. Supports any video URL via yt-dlp (TikTok, YouTube, Instagram, Twitter, Facebook, Twitch, and 1000+ other sites).
+A production-grade download manager with adaptive concurrency, intelligent retry logic, and a clean dark UI.
+
+Supports any video URL via yt-dlp — TikTok, YouTube, Instagram, Twitter, Facebook, Twitch, and 1000+ other sites.
+
+## Quick Start
+
+**Windows (no install needed):**
+
+1. Download the `Sassi Downloader/` folder
+2. Open it
+3. Double-click `Sassi Downloader.exe`
+
+That's it. No Python, no dependencies, no installation.
 
 ## Features
 
-- **Adaptive Concurrency** — Automatically adjusts 1–8 streams per host based on server response speed
-- **Intelligent Retries** — Exponential backoff with error classification (transient vs permanent)
-- **Priority Queue** — HIGH / NORMAL / LOW priority scheduling with bandwidth fairness
-- **Integrity Validation** — File size verification + MD5 checksum on completion
-- **Server Capability Cache** — Remembers per-host performance profiles across sessions
-- **Pause / Resume / Cancel** — Thread-safe state machine with 8 explicit states
+- **Adaptive Concurrency** — Adjusts 1–8 streams per host based on server speed
+- **Intelligent Retries** — Exponential backoff with error classification
+- **Priority Queue** — HIGH / NORMAL / LOW with bandwidth fairness
+- **Integrity Validation** — File size + MD5 checksum on completion
+- **Server Cache** — Remembers per-host performance across sessions
+- **Pause / Resume / Cancel** — Thread-safe state machine
 - **Download History** — Atomic writes, persists across sessions
-- **Quality Selection** — Fetches available formats, lets you choose before downloading
+- **Quality Selection** — Fetches available formats, lets you choose
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│                  UI Layer                    │
-│  Throttled at 8 FPS · Delta-only renders    │
-├─────────────────────────────────────────────┤
-│              Download Engine                 │
-│  AdaptiveConcurrency · HostLimiter           │
-│  BandwidthScheduler · ErrorClassifier        │
-├─────────────────────────────────────────────┤
-│           Infrastructure Layer               │
-│  ServerCache · AtomicHistory · Integrity     │
-└─────────────────────────────────────────────┘
+core/
+├── enums.py        # State machine, error classification
+├── cache.py        # Server cache + error chain tracking
+├── verifier.py     # Chunk verification + integrity
+├── scheduler.py    # Adaptive concurrency + bandwidth fairness
+├── task.py         # Download task with state machine
+└── engine.py       # Download engine orchestration
+
+ui/
+└── main_window.py  # Glass UI with state color coding
+
+main.py             # Entry point
 ```
 
-## Requirements
-
-- Python 3.10+
-- `yt-dlp`
-- `tkinter` (included with Python)
-
-## Usage
-
-### From source
+## Build from Source
 
 ```bash
-pip install yt-dlp
-python main.py
+pip install yt-dlp pyinstaller
+pyinstaller --onedir --noconsole --name "Sassi Downloader" --icon=icon.ico main.py
 ```
-
-### Build executable
-
-```bash
-pip install pyinstaller yt-dlp
-pyinstaller --onefile --windowed --name "Sassi Downloader" --icon=icon.ico main.py
-```
-
-The `.exe` will be in `dist/`.
-
-## How it works
-
-1. **Paste** any video URL
-2. **Fetch** — queries the server for available quality formats
-3. **Choose** quality + priority (High / Normal / Low)
-4. **Download** — engine handles concurrency, retries, integrity
-
-## Error handling
-
-| Error Type | Behavior |
-|---|---|
-| Transient (timeout, reset) | Retry with exponential backoff |
-| Permanent (404, 410) | Stop immediately |
-| Auth (403) | Stop — requires user action |
-| Throttle (429) | Back off, then retry |
-| Range mismatch | Fallback to single-stream |
 
 ## License
 
