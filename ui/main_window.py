@@ -131,6 +131,10 @@ class SassiDownloader:
                                  activebackground="#56d364", command=self.download)
         self.dl_btn.pack(side=tk.RIGHT, ipadx=12, ipady=3)
 
+        self.status_label = tk.Label(self.root, text="", font=("Segoe UI", 9),
+                                      fg=FG_DIM, bg=BG)
+        self.status_label.pack(anchor=tk.W, padx=20, pady=(2, 0))
+
         tk.Label(self.root, text="Active Downloads", font=("Segoe UI", 10, "bold"),
                  fg=FG, bg=BG).pack(anchor=tk.W, padx=20, pady=(8, 2))
 
@@ -207,6 +211,7 @@ class SassiDownloader:
         if not url:
             return
         self.fetch_btn.config(text="...", state=tk.DISABLED)
+        self.status_label.config(text="Fetching available qualities...", fg=ACCENT)
         def work():
             try:
                 o = {'quiet': True, 'no_warnings': True, 'skip_download': True}
@@ -226,21 +231,43 @@ class SassiDownloader:
                 fmts.sort(key=lambda x: int(x[0].split('p')[0]) if x[1] != "best" else 99999, reverse=True)
                 self.formats = fmts
                 self.root.after(0, self._fetch_ok)
-            except Exception:
-                self.root.after(0, self._fetch_err)
+            except Exception as e:
+                self.root.after(0, lambda: self._fetch_err(str(e)))
         threading.Thread(target=work, daemon=True).start()
 
     def _fetch_ok(self):
         self.fetch_btn.config(text="Fetch", state=tk.NORMAL)
         self.q_menu['values'] = [f[0] for f in self.formats]
         self.q_menu.current(0)
+        self.status_label.config(text=f"Found {len(self.formats)} qualities", fg=GREEN)
 
-    def _fetch_err(self):
+    def _fetch_err(self, error=""):
         self.fetch_btn.config(text="Fetch", state=tk.NORMAL)
+        self.status_label.config(text=f"Fetch failed: {error[:50]}", fg=RED)
 
     def download(self):
         url = self.url_entry.get().strip()
-        if not url or not self.formats:
+        if not url:
+            return
+        if not self.formats:
+            self.fetch()
+            self.root.after(2000, lambda: self._retry_download(url))
+            return
+        i = self.q_menu.current()
+        q = self.formats[i][1] if i >= 0 else "best"
+        p = self.priority_var.get().lower()
+        pri = Priority.HIGH if p == "high" else Priority.LOW if p == "low" else Priority.NORMAL
+        task = DownloadTask(url, q, self.dl_path, pri)
+        card = self._make_card(task)
+        self.cards[task.id] = card
+        self.engine.add(task)
+        task._on_update = lambda t: self.root.after(0, self._upd_card, t)
+        task._on_done = lambda t: self.root.after(0, self._done_card, t)
+        task._on_error = lambda t: self.root.after(0, self._err_card, t)
+        self.url_entry.delete(0, tk.END)
+
+    def _retry_download(self, url):
+        if not self.formats:
             return
         i = self.q_menu.current()
         q = self.formats[i][1] if i >= 0 else "best"
