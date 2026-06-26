@@ -16,6 +16,11 @@ from urllib.parse import urlparse
 HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".sassi_history.json")
 CACHE_FILE = os.path.join(os.path.expanduser("~"), ".sassi_server_cache.json")
 
+CACHE_TTL = 21600  # 6 hours
+CONFIDENCE_DECAY = 0.85  # multiply confidence on failure
+CONFIDENCE_RECOVER = 1.05  # multiply on success (capped at 1.0)
+AGE_TICK = 300  # seconds before priority inflation check
+
 # ── State Machine ───────────────────────────────────────────────
 class State(Enum):
     QUEUED = "queued"
@@ -60,10 +65,47 @@ def classify_error(error_msg):
 def should_retry(err_class):
     return err_class in (ErrorClass.TRANSIENT, ErrorClass.THROTTLE, ErrorClass.UNKNOWN)
 
-def is_retryable_range(err_class):
-    return err_class == ErrorClass.RANGE_MISMATCH
+# ── Error Cause Chain ───────────────────────────────────────────
+class ErrorChain:
+    def __init__(self):
+        self._history = defaultdict(list)
+        self._lock = threading.Lock()
 
-# ── Server Capability Cache ─────────────────────────────────────
+    def record(self, host, err_class):
+        with self._lock:
+            self._history[host].append({
+                "class": err_class,
+                "time": time.time()
+            })
+            if len(self._history[host]) > 50:
+                self._history[host] = self._history[host][-50:]
+
+    def get_pattern(self, host):
+        with self._lock:
+            recent = [e for e in self._history.get(host, []) if time.time() - e["time"] < 3600]
+            if not recent:
+                return None, 0
+            counts = defaultdict(int)
+            for e in recent:
+                counts[e["class"]] += 1
+            dominant = max(counts, key=counts.get)
+            return dominant, counts[dominant]
+
+    def should_degrade(self, host):
+        pattern, count = self.get_pattern(host)
+        if pattern == ErrorClass.TRANSIENT and count >= 3:
+            return True, "repeated_transient"
+        if pattern == ErrorClass.THROTTLE and count >= 2:
+            return True, "throttled"
+        if pattern == ErrorClass.RANGE_MISMATCH and count >= 2:
+            return True, "unstable_server"
+        return False, None
+
+    def clear(self, host):
+        with self._lock:
+            self._history.pop(host, None)
+
+# ── Server Capability Cache with TTL + Confidence ───────────────
 class ServerCache:
     def __init__(self):
         self._data = self._load()
@@ -77,8 +119,8 @@ class ServerCache:
 
     def _save(self):
         try:
-            dir_n = os.path.dirname(CACHE_FILE)
-            fd, tmp = tempfile.mkstemp(dir=dir_n, suffix='.tmp')
+            d = os.path.dirname(CACHE_FILE)
+            fd, tmp = tempfile.mkstemp(dir=d, suffix='.tmp')
             with os.fdopen(fd, 'w') as f:
                 json.dump(self._data, f, indent=2)
             if os.name == 'nt' and os.path.exists(CACHE_FILE):
@@ -87,38 +129,123 @@ class ServerCache:
         except:
             pass
 
-    def get_profile(self, host):
-        return self._data.get(host, {
+    def _default_profile(self):
+        return {
             "range_support": True,
             "optimal_streams": 2,
             "avg_latency_ms": 200,
             "avg_speed_bps": 500000,
-            "samples": 0
-        })
+            "samples": 0,
+            "confidence": 1.0,
+            "last_update": 0,
+            "failures": 0
+        }
 
-    def update(self, host, speed_bps, latency_ms=None, range_ok=True):
-        p = self._data.get(host, {
-            "range_support": True, "optimal_streams": 2,
-            "avg_latency_ms": 200, "avg_speed_bps": 500000, "samples": 0
-        })
+    def _is_stale(self, profile):
+        return time.time() - profile.get("last_update", 0) > CACHE_TTL
+
+    def get_profile(self, host):
+        p = self._data.get(host, self._default_profile())
+        if self._is_stale(p):
+            p["confidence"] *= 0.7
+            p["samples"] = max(1, p["samples"] // 2)
+            p["last_update"] = time.time()
+            self._data[host] = p
+        return p
+
+    def update(self, host, speed_bps, latency_ms=None, range_ok=True, success=True):
+        p = self._data.get(host, self._default_profile())
         n = p["samples"]
-        p["avg_speed_bps"] = (p["avg_speed_bps"] * n + speed_bps) / (n + 1)
-        if latency_ms is not None:
-            p["avg_latency_ms"] = (p["avg_latency_ms"] * n + latency_ms) / (n + 1)
+
+        if success:
+            p["avg_speed_bps"] = (p["avg_speed_bps"] * n + speed_bps) / (n + 1)
+            if latency_ms is not None:
+                p["avg_latency_ms"] = (p["avg_latency_ms"] * n + latency_ms) / (n + 1)
+            p["samples"] = min(n + 1, 100)
+            p["confidence"] = min(1.0, p["confidence"] * CONFIDENCE_RECOVER)
+            p["failures"] = 0
+
+            if p["avg_speed_bps"] > 1000000:
+                p["optimal_streams"] = min(p["optimal_streams"] + 1, 8)
+            elif p["avg_speed_bps"] < 100000:
+                p["optimal_streams"] = max(p["optimal_streams"] - 1, 1)
+        else:
+            p["failures"] += 1
+            p["confidence"] *= CONFIDENCE_DECAY
+            if p["failures"] >= 3:
+                p["optimal_streams"] = max(1, p["optimal_streams"] - 1)
+
         p["range_support"] = range_ok
-        p["samples"] = min(n + 1, 100)
-
-        if p["avg_speed_bps"] > 1000000:
-            p["optimal_streams"] = min(p["optimal_streams"] + 1, 8)
-        elif p["avg_speed_bps"] < 100000:
-            p["optimal_streams"] = max(p["optimal_streams"] - 1, 1)
-
+        p["last_update"] = time.time()
         self._data[host] = p
         self._save()
         return p
 
     def get_optimal_streams(self, host):
-        return self.get_profile(host)["optimal_streams"]
+        p = self.get_profile(host)
+        effective = p["optimal_streams"]
+        if p["confidence"] < 0.5:
+            effective = 1
+        elif p["confidence"] < 0.8:
+            effective = max(1, effective - 1)
+        return effective
+
+    def get_confidence(self, host):
+        return self.get_profile(host).get("confidence", 1.0)
+
+# ── Chunk Verification Layer ────────────────────────────────────
+class ChunkVerifier:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._chunks = {}
+
+    def start_tracking(self, task_id, expected_size):
+        with self._lock:
+            self._chunks[task_id] = {
+                "expected_size": expected_size,
+                "last_downloaded": 0,
+                "stall_count": 0,
+                "size_decreases": 0,
+                "start_time": time.time()
+            }
+
+    def on_progress(self, task_id, downloaded, total):
+        with self._lock:
+            c = self._chunks.get(task_id)
+            if not c:
+                return True, "ok"
+
+            if total > 0 and c["expected_size"] > 0 and total != c["expected_size"]:
+                c["size_decreases"] += 1
+                if c["size_decreases"] >= 3:
+                    return False, "server_returned_different_file"
+
+            if downloaded < c["last_downloaded"] and c["last_downloaded"] > 0:
+                c["size_decreases"] += 1
+                if c["size_decreases"] >= 3:
+                    return False, "byte_count_decreased"
+
+            if downloaded == c["last_downloaded"] and downloaded > 0:
+                c["stall_count"] += 1
+                if c["stall_count"] >= 30:
+                    return False, "download_stalled"
+            else:
+                c["stall_count"] = 0
+
+            c["last_downloaded"] = downloaded
+            return True, "ok"
+
+    def stop_tracking(self, task_id):
+        with self._lock:
+            self._chunks.pop(task_id, None)
+
+    def validate_completion(self, task_id, actual_size):
+        with self._lock:
+            c = self._chunks.get(task_id, {})
+            expected = c.get("expected_size", 0)
+            if expected > 0 and actual_size != expected:
+                return False, f"size_mismatch: expected {expected}, got {actual_size}"
+            return True, "ok"
 
 # ── Integrity Validator ─────────────────────────────────────────
 class IntegrityValidator:
@@ -141,31 +268,20 @@ class IntegrityValidator:
                 h.update(chunk)
         return h.hexdigest()
 
-    @staticmethod
-    def verify_resume(url, local_size):
-        try:
-            opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                remote_size = info.get('filesize', 0) or info.get('filesize_approx', 0)
-                if remote_size > 0 and local_size > remote_size:
-                    return False, "Local file larger than remote (corruption)"
-                if remote_size > 0 and local_size == remote_size:
-                    return True, "Complete"
-                return True, "Partial — resume possible"
-        except:
-            return True, "Cannot verify — assuming valid"
-
 # ── Adaptive Concurrency ────────────────────────────────────────
 class AdaptiveConcurrency:
-    def __init__(self, server_cache):
+    def __init__(self, server_cache, error_chain):
         self._cache = server_cache
+        self._chain = error_chain
 
     def get_streams(self, host):
+        should_degrade, reason = self._chain.should_degrade(host)
+        if should_degrade:
+            return 1
         return self._cache.get_optimal_streams(host)
 
     def adjust(self, host, success, speed_bps):
-        self._cache.update(host, speed_bps)
+        self._cache.update(host, speed_bps, success=success)
         return self._cache.get_optimal_streams(host)
 
 # ── Per-Host Limiter ────────────────────────────────────────────
@@ -176,7 +292,6 @@ class HostLimiter:
         self._global_max = 8
         self._global_count = 0
         self._lock = threading.Lock()
-        self._wait_events = []
 
     def acquire(self, host):
         while True:
@@ -211,34 +326,58 @@ class UIUpdater:
         with self._lock:
             self._last.pop(task_id, None)
 
-# ── Bandwidth Fairness Scheduler ────────────────────────────────
+# ── Bandwidth Scheduler with Priority Aging ─────────────────────
 class BandwidthScheduler:
+    BASE_WEIGHTS = {Priority.HIGH: 3.0, Priority.NORMAL: 1.0, Priority.LOW: 0.5}
+    MIN_GUARANTEE = 0.15
+
     def __init__(self):
-        self._weights = {}
+        self._tasks = {}
         self._lock = threading.Lock()
 
     def set_priority(self, task_id, priority):
         with self._lock:
-            if priority == Priority.HIGH:
-                self._weights[task_id] = 3.0
-            elif priority == Priority.LOW:
-                self._weights[task_id] = 0.5
-            else:
-                self._weights[task_id] = 1.0
+            self._tasks[task_id] = {
+                "base_priority": priority,
+                "effective_priority": priority,
+                "weight": self.BASE_WEIGHTS[priority],
+                "enqueue_time": time.time(),
+                "last_age_tick": time.time()
+            }
 
     def remove(self, task_id):
         with self._lock:
-            self._weights.pop(task_id, None)
+            self._tasks.pop(task_id, None)
 
-    def get_total_weight(self):
-        with self._lock:
-            return sum(self._weights.values()) or 1.0
+    def _age_priorities(self):
+        now = time.time()
+        for tid, t in self._tasks.items():
+            if now - t["last_age_tick"] < AGE_TICK:
+                continue
+            t["last_age_tick"] = now
+            wait = now - t["enqueue_time"]
+            ep = t["effective_priority"]
+            if ep == Priority.LOW and wait > 120:
+                t["effective_priority"] = Priority.NORMAL
+                t["weight"] = self.BASE_WEIGHTS[Priority.NORMAL] * 1.2
+            elif ep == Priority.NORMAL and wait > 300:
+                t["effective_priority"] = Priority.HIGH
+                t["weight"] = self.BASE_WEIGHTS[Priority.HIGH] * 1.1
 
     def get_share(self, task_id):
         with self._lock:
-            w = self._weights.get(task_id, 1.0)
-            total = sum(self._weights.values()) or 1.0
-            return w / total
+            self._age_priorities()
+            t = self._tasks.get(task_id)
+            if not t:
+                return 1.0
+            total = sum(x["weight"] for x in self._tasks.values()) or 1.0
+            raw = t["weight"] / total
+            return max(raw, self.MIN_GUARANTEE)
+
+    def get_dispatch_priority(self, task_id):
+        with self._lock:
+            t = self._tasks.get(task_id)
+            return t["effective_priority"] if t else Priority.NORMAL
 
 # ── Atomic History ──────────────────────────────────────────────
 class AtomicHistory:
@@ -339,11 +478,13 @@ class DownloadTask:
 class DownloadEngine:
     def __init__(self):
         self.server_cache = ServerCache()
+        self.error_chain = ErrorChain()
         self.host_limiter = HostLimiter()
-        self.concurrency = AdaptiveConcurrency(self.server_cache)
+        self.concurrency = AdaptiveConcurrency(self.server_cache, self.error_chain)
         self.ui_updater = UIUpdater(fps=8)
         self.bandwidth = BandwidthScheduler()
         self.integrity = IntegrityValidator()
+        self.chunk_verifier = ChunkVerifier()
         self.tasks = []
         self._active = 0
         self._max_concurrent = 4
@@ -359,10 +500,8 @@ class DownloadEngine:
 
     def _dispatch(self):
         with self._lock:
-            queued = sorted(
-                [t for t in self._queue if t.state == State.QUEUED],
-                key=lambda t: t.priority.value
-            )
+            queued = [t for t in self._queue if t.state == State.QUEUED]
+            queued.sort(key=lambda t: self.bandwidth.get_dispatch_priority(t.id).value)
             while self._active < self._max_concurrent and queued:
                 task = queued.pop(0)
                 self._queue.remove(task)
@@ -378,11 +517,13 @@ class DownloadEngine:
             finally:
                 self.host_limiter.release(task.host)
                 self.bandwidth.remove(task.id)
+                self.chunk_verifier.stop_tracking(task.id)
         except Exception as e:
             if not task.should_cancel():
                 task.state = State.FAILED
                 task.error = str(e)
                 task.error_class = classify_error(str(e))
+                self.error_chain.record(task.host, task.error_class)
                 self._safe_call(task._on_error, task)
         finally:
             with self._lock:
@@ -401,6 +542,8 @@ class DownloadEngine:
 
                 stream_count = self.concurrency.get_streams(task.host)
 
+                self.chunk_verifier.start_tracking(task.id, task.filesize)
+
                 def hook(d):
                     if task.should_cancel():
                         raise yt_dlp.utils.DownloadCancelled()
@@ -414,7 +557,14 @@ class DownloadEngine:
                         task.speed = d.get('_speed', 0) or 0
                         task.eta = d.get('_eta_str', '').strip()
                         task.downloaded = d.get('downloaded_bytes', 0) or 0
-                        task.filesize = d.get('total_bytes', 0) or d.get('total_bytes_expect', 0) or 0
+                        new_total = d.get('total_bytes', 0) or d.get('total_bytes_expect', 0) or 0
+                        if new_total > 0:
+                            task.filesize = new_total
+
+                        ok, reason = self.chunk_verifier.on_progress(task.id, task.downloaded, task.filesize)
+                        if not ok:
+                            raise Exception(f"Chunk verification failed: {reason}")
+
                         self._safe_call(task._on_update, task)
                     elif d['status'] == 'finished':
                         task.progress = 100
@@ -446,12 +596,17 @@ class DownloadEngine:
                 elapsed = time.time() - start_time
                 speed_avg = task.downloaded / elapsed if elapsed > 0 else 0
 
+                chunk_ok, chunk_msg = self.chunk_verifier.validate_completion(task.id, os.path.getsize(task.filename) if os.path.exists(task.filename) else 0)
+                if not chunk_ok:
+                    raise Exception(f"Post-download verification: {chunk_msg}")
+
                 valid, msg = self.integrity.validate_file(task.filename, task.filesize)
                 if not valid:
                     raise Exception(f"Integrity check failed: {msg}")
 
                 self.concurrency.adjust(task.host, True, speed_avg)
-                self.server_cache.update(task.host, speed_avg, range_ok=True)
+                self.server_cache.update(task.host, speed_avg, range_ok=True, success=True)
+                self.error_chain.clear(task.host)
 
                 task.state = State.COMPLETED
                 self._safe_call(task._on_done, task)
@@ -461,6 +616,7 @@ class DownloadEngine:
                 return
             except Exception as e:
                 err_class = classify_error(str(e))
+                self.error_chain.record(task.host, err_class)
 
                 if err_class == ErrorClass.AUTH:
                     task.state = State.FAILED
@@ -477,7 +633,7 @@ class DownloadEngine:
                     return
 
                 if err_class == ErrorClass.RANGE_MISMATCH:
-                    self.server_cache.update(task.host, 0, range_ok=False)
+                    self.server_cache.update(task.host, 0, range_ok=False, success=False)
                     task.state = State.RETRYING
                     self._safe_call(task._on_update, task)
                     time.sleep(2)
@@ -534,7 +690,6 @@ GREEN = "#3fb950"
 YELLOW = "#d29922"
 RED = "#f85149"
 BORDER = "#30363d"
-PURPLE = "#bc8cff"
 
 # ── UI ──────────────────────────────────────────────────────────
 class SassiDownloader:
@@ -558,7 +713,7 @@ class SassiDownloader:
                  fg=FG_BRIGHT, bg=BG).pack(side=tk.LEFT)
         tk.Label(hdr, text="Downloader", font=("Segoe UI", 22),
                  fg=FG_DIM, bg=BG).pack(side=tk.LEFT, padx=(4, 0))
-        tk.Label(hdr, text="v4.0", font=("Segoe UI", 9),
+        tk.Label(hdr, text="v4.1", font=("Segoe UI", 9),
                  fg=FG_DIM, bg=BG).pack(side=tk.LEFT, padx=(8, 0), pady=(6, 0))
 
         card = tk.Frame(self.root, bg=BG_GLASS, highlightbackground=BORDER, highlightthickness=1)
@@ -802,6 +957,9 @@ class SassiDownloader:
         share = self.engine.bandwidth.get_share(task.id)
         if share < 0.9:
             parts.append(f"share:{share:.0%}")
+        conf = self.engine.server_cache.get_confidence(task.host)
+        if conf < 0.8:
+            parts.append(f"conf:{conf:.0%}")
         card["info"].config(text="  ·  ".join(parts), fg=FG_DIM)
 
     def _done_card(self, task):
