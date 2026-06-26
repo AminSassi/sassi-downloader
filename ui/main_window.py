@@ -248,26 +248,25 @@ class SassiDownloader:
     def download(self):
         url = self.url_entry.get().strip()
         if not url:
+            self.status_label.config(text="Paste a URL first", fg=YELLOW)
             return
         if not self.formats:
+            self.status_label.config(text="Fetching qualities...", fg=ACCENT)
             self.fetch()
-            self.root.after(2000, lambda: self._retry_download(url))
+            self._pending_url = url
+            self._poll_fetch()
             return
-        i = self.q_menu.current()
-        q = self.formats[i][1] if i >= 0 else "best"
-        p = self.priority_var.get().lower()
-        pri = Priority.HIGH if p == "high" else Priority.LOW if p == "low" else Priority.NORMAL
-        task = DownloadTask(url, q, self.dl_path, pri)
-        card = self._make_card(task)
-        self.cards[task.id] = card
-        self.engine.add(task)
-        task._on_update = lambda t: self.root.after(0, self._upd_card, t)
-        task._on_done = lambda t: self.root.after(0, self._done_card, t)
-        task._on_error = lambda t: self.root.after(0, self._err_card, t)
-        self.url_entry.delete(0, tk.END)
+        self._start_download(url)
 
-    def _retry_download(self, url):
+    def _poll_fetch(self):
+        if self.formats:
+            self._start_download(self._pending_url)
+        else:
+            self.root.after(500, self._poll_fetch)
+
+    def _start_download(self, url):
         if not self.formats:
+            self.status_label.config(text="Failed to fetch qualities", fg=RED)
             return
         i = self.q_menu.current()
         q = self.formats[i][1] if i >= 0 else "best"
@@ -281,6 +280,7 @@ class SassiDownloader:
         task._on_done = lambda t: self.root.after(0, self._done_card, t)
         task._on_error = lambda t: self.root.after(0, self._err_card, t)
         self.url_entry.delete(0, tk.END)
+        self.status_label.config(text="Download started", fg=GREEN)
 
     def _make_card(self, task):
         pri_labels = {Priority.HIGH: "HIGH", Priority.NORMAL: "", Priority.LOW: "LOW"}
