@@ -279,15 +279,20 @@ class AddTaskDialog(ctk.CTkToplevel):
                 with yt_dlp.YoutubeDL(o) as y:
                     info = y.extract_info(url, download=False)
                 fmts = [("Best (auto)", "best")]
-                seen = {"best"}
+                seen_heights = set()
                 for f in info.get('formats', []):
                     h = f.get('height')
                     vc = f.get('vcodec', 'none')
+                    ac = f.get('acodec', 'none')
                     ext = f.get('ext', '')
-                    if vc != 'none' and h and h >= 360:
-                        label = f"{h}p ({ext.upper()})"
-                        if label not in seen:
-                            seen.add(label)
+                    fps = f.get('fps', 0) or 0
+                    note = f.get('format_note', '')
+                    if vc != 'none' and h and h >= 240:
+                        fps_str = f" {fps}fps" if fps > 30 else ""
+                        note_str = f" ({note})" if note and note.lower() not in ('default', 'medium', 'low', 'high') else ""
+                        label = f"{h}p{fps_str} ({ext.upper()}){note_str}"
+                        if h not in seen_heights:
+                            seen_heights.add(h)
                             fmts.append((label, f['format_id']))
                 fmts.sort(key=lambda x: int(x[0].split('p')[0]) if x[1] != "best" else 99999, reverse=True)
                 self.formats = fmts
