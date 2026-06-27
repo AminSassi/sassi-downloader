@@ -434,62 +434,70 @@ class AddTaskDialog(ctk.CTkToplevel):
             try:
                 self.after(0, lambda: self._cookie_status.configure(
                     text=f"Importing from {browser.title()}...", text_color=ACCENT))
-                import yt_dlp as _yt
-                o = {
-                    'quiet': True, 'no_warnings': True, 'skip_download': True,
-                    'cookiesfrombrowser': (browser,),
-                }
-                with _yt.YoutubeDL(o) as y:
-                    y.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
-                if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 50:
-                    self.after(0, lambda: self._cookie_status.configure(
-                        text=f"{browser.title()} login imported!", text_color=GREEN))
-                else:
-                    self.after(0, lambda: self._cookie_status.configure(
-                        text=f"{browser.title()} not logged in. Log in to Instagram first.", text_color=ORANGE))
-            except Exception as err:
-                err_msg = str(err).lower()
-                if 'cookie' in err_msg and ('copy' in err_msg or 'database' in err_msg or 'locked' in err_msg):
-                    fallback = "edge" if browser == "chrome" else "chrome"
-                    detected = self._detect_browsers()
-                    if fallback in [b.lower() for b in detected]:
+
+                cookie_db = self._find_cookie_db(browser)
+                if cookie_db and os.path.exists(cookie_db):
+                    import shutil, tempfile
+                    tmp_db = os.path.join(tempfile.gettempdir(), f"sassi_{browser}_cookies.db")
+                    try:
+                        shutil.copy2(cookie_db, tmp_db)
+                    except PermissionError:
                         self.after(0, lambda: self._cookie_status.configure(
-                            text=f"{browser.title()} is locked. Trying {fallback.title()}...", text_color=ACCENT))
-                        self._import_cookies_from_direct(fallback)
+                            text=f"{browser.title()} is locked. Close it and try again.", text_color=ORANGE))
                         return
-                    self.after(0, lambda: self._cookie_status.configure(
-                        text=f"{browser.title()} is locked. Close it or try another browser.", text_color=ORANGE))
-                else:
-                    err_msg_short = str(err)[:50]
-                    self.after(0, lambda m=err_msg_short: self._cookie_status.configure(
-                        text=f"Failed: {m}", text_color=RED))
 
-        _threading.Thread(target=work, daemon=True).start()
+                    import yt_dlp as _yt
+                    o = {
+                        'quiet': True, 'no_warnings': True, 'skip_download': True,
+                        'cookiesfrombrowser': (browser, None, tmp_db),
+                    }
+                    try:
+                        with _yt.YoutubeDL(o) as y:
+                            y.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
+                    except Exception:
+                        pass
 
-    def _import_cookies_from_direct(self, browser):
-        import threading as _threading
-        from core.engine import COOKIE_FILE
+                    try:
+                        os.remove(tmp_db)
+                    except Exception:
+                        pass
 
-        def work():
-            try:
-                import yt_dlp as _yt
-                o = {
-                    'quiet': True, 'no_warnings': True, 'skip_download': True,
-                    'cookiesfrombrowser': (browser,),
-                }
-                with _yt.YoutubeDL(o) as y:
-                    y.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
-                if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 50:
-                    self.after(0, lambda: self._cookie_status.configure(
-                        text=f"{browser.title()} login imported!", text_color=GREEN))
+                    if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 50:
+                        self.after(0, lambda: self._cookie_status.configure(
+                            text=f"{browser.title()} login imported!", text_color=GREEN))
+                    else:
+                        self.after(0, lambda: self._cookie_status.configure(
+                            text=f"{browser.title()} not logged in. Log in first.", text_color=ORANGE))
                 else:
                     self.after(0, lambda: self._cookie_status.configure(
-                        text=f"{browser.title()} not logged in.", text_color=ORANGE))
-            except Exception:
+                        text=f"{browser.title()} not found.", text_color=ORANGE))
+            except Exception as err:
                 self.after(0, lambda: self._cookie_status.configure(
-                    text=f"{browser.title()} unavailable. Try logging in.", text_color=ORANGE))
+                    text=f"Failed: {str(err)[:50]}", text_color=RED))
 
         _threading.Thread(target=work, daemon=True).start()
+
+    @staticmethod
+    def _find_cookie_db(browser):
+        if sys.platform == "win32":
+            local = os.environ.get("LOCALAPPDATA", "")
+            paths = {
+                "chrome": os.path.join(local, "Google", "Chrome", "User Data", "Default", "Network", "Cookies"),
+                "edge": os.path.join(local, "Microsoft", "Edge", "User Data", "Default", "Network", "Cookies"),
+            }
+        elif sys.platform == "darwin":
+            home = os.path.expanduser("~")
+            paths = {
+                "chrome": os.path.join(home, "Library", "Application Support", "Google", "Chrome", "Default", "Network", "Cookies"),
+                "edge": os.path.join(home, "Library", "Application Support", "Microsoft Edge", "Default", "Network", "Cookies"),
+            }
+        else:
+            home = os.path.expanduser("~")
+            paths = {
+                "chrome": os.path.join(home, ".config", "google-chrome", "Default", "Network", "Cookies"),
+                "edge": os.path.join(home, ".config", "microsoft-edge", "Default", "Network", "Cookies"),
+            }
+        return paths.get(browser.lower())
 
     def _save(self):
         url = self.url_entry.get().strip()
