@@ -66,7 +66,8 @@ class TestURLValidation:
 
 class TestPathTraversal:
     def _sanitize(self, name):
-        return ''.join(c for c in os.path.basename(name) if c.isalnum() or c in ' ._-=+()[]')
+        normalized = name.replace('\\', '/')
+        return ''.join(c for c in os.path.basename(normalized) if c.isalnum() or c in ' ._-=+()[]')
 
     @pytest.mark.parametrize("input_name,expected", [
         ('../../etc/passwd', 'passwd'),

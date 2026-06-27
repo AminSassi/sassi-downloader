@@ -105,7 +105,8 @@ class DownloadEngine:
                 fmt = self._build_format(task)
                 outtmpl = os.path.join(task.folder, '%(title)s.%(ext)s')
                 if task.rename:
-                    safe_name = os.path.basename(task.rename)
+                    normalized = task.rename.replace('\\', '/')
+                    safe_name = os.path.basename(normalized)
                     safe_name = "".join(c for c in safe_name if c.isalnum() or c in " ._-=+()[]")
                     if safe_name.strip():
                         base, ext = os.path.splitext(safe_name)
