@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import threading
 import yt_dlp
@@ -25,11 +26,39 @@ def _has_ffmpeg():
 HAS_FFMPEG = None
 
 
+def _has_ffmpeg():
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['ffmpeg', '-version'], capture_output=True, timeout=5,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 def has_ffmpeg():
     global HAS_FFMPEG
     if HAS_FFMPEG is None:
         HAS_FFMPEG = _has_ffmpeg()
     return HAS_FFMPEG
+
+
+def _detect_browsers():
+    browsers = []
+    if sys.platform == "win32":
+        import winreg
+        for name, reg_key in [("chrome", r"Software\Google\Chrome\BLBeacon"),
+                               ("edge", r"Software\Microsoft\Edge\BLBeacon"),
+                               ("firefox", r"Software\Mozilla\Mozilla Firefox")]:
+            try:
+                k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_key)
+                winreg.CloseKey(k)
+                browsers.append(name)
+            except OSError:
+                pass
+    return browsers
 
 
 class DownloadEngine:
@@ -161,6 +190,10 @@ class DownloadEngine:
                     opts['merge_output_format'] = 'mp4'
                 if os.path.exists(COOKIE_FILE):
                     opts['cookiefile'] = COOKIE_FILE
+                else:
+                    detected = _detect_browsers()
+                    if detected:
+                        opts['cookiesfrombrowser'] = (detected[0].lower(),)
                 splits = getattr(task, 'splits', 32)
                 if stream_count > 1:
                     opts['concurrent_fragment_downloads'] = min(stream_count, max(1, splits // 8))
@@ -205,11 +238,22 @@ class DownloadEngine:
                     return
                 raise
             except Exception as e:
+                err_msg = str(e).lower()
+                is_auth = any(x in err_msg for x in ['login', 'sign in', 'cookie', 'empty response',
+                                                       'unauthorized', '403', '401', 'please log in',
+                                                       'confirm you', 'bot', 'instagram'])
                 err_class = classify_error(str(e))
+                if is_auth:
+                    err_class = ErrorClass.AUTH
                 self.error_chain.record(task.host, err_class)
                 if err_class in (ErrorClass.AUTH, ErrorClass.PERMANENT):
                     task.state = State.FAILED
-                    task.error = str(e)
+                    if is_auth and 'instagram' in err_msg:
+                        task.error = "Instagram requires login. Click 'Use Browser Login' in the dialog."
+                    elif is_auth:
+                        task.error = "Site requires login. Try importing browser cookies."
+                    else:
+                        task.error = str(e)[:120]
                     task.error_class = err_class
                     self._safe_call(task._on_error, task)
                     return
