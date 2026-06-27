@@ -58,7 +58,7 @@ def main():
             break
 
     root.title(f"Sassi Downloader {build['version']} ({build['commit']})")
-    app = SassiDownloader(root)
+    SassiDownloader(root)
     root.mainloop()
 
 

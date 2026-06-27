@@ -304,7 +304,6 @@ class AddTaskDialog(ctk.CTkToplevel):
                 for f in info.get('formats', []):
                     h = f.get('height')
                     vc = f.get('vcodec', 'none')
-                    ac = f.get('acodec', 'none')
                     ext = f.get('ext', '')
                     fps = f.get('fps', 0) or 0
                     note = f.get('format_note', '')
@@ -356,7 +355,7 @@ class AddTaskDialog(ctk.CTkToplevel):
                     pass
                 try:
                     import subprocess
-                    result = subprocess.run(
+                    subprocess.run(
                         ['yt-dlp', '--cookies-from-browser', 'chrome', '--cookies', COOKIE_FILE,
                          '--skip-download', '-o', 'test', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'],
                         capture_output=True, timeout=30, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
@@ -368,8 +367,9 @@ class AddTaskDialog(ctk.CTkToplevel):
                 else:
                     self.after(0, lambda: self._cookie_status.configure(
                         text="Chrome not found. Try Edge/Firefox or export cookies manually.", text_color=ORANGE))
-            except Exception as e:
-                self.after(0, lambda: self._cookie_status.configure(text=f"Error: {str(e)[:40]}", text_color=RED))
+            except Exception as err:
+                err_msg = str(err)[:40]
+                self.after(0, lambda m=err_msg: self._cookie_status.configure(text=f"Error: {m}", text_color=RED))
 
         _threading.Thread(target=work, daemon=True).start()
 
@@ -627,15 +627,20 @@ class SassiDownloader:
 
     def audit_log(self, event_type, task_id=None, url="", folder="", outcome="", error=""):
         import time as _time
-        timestamp = _time.strftime("%Y-%m-%d %H:%M:%S")
-        safe_url = url[:80] if url else ""
-        line = f"[{timestamp}] {event_type} | id={task_id} | url={safe_url} | dir={folder} | outcome={outcome}"
+        import json
+        entry = {
+            "timestamp": _time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "event": event_type,
+            "task_id": task_id,
+            "url": url[:200] if url else "",
+            "folder": folder,
+            "outcome": outcome,
+        }
         if error:
-            line += f" | error={error[:100]}"
-        line += "\n"
+            entry["error"] = error[:200]
         try:
             with open(AUDIT_LOG, "a", encoding="utf-8") as f:
-                f.write(line)
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception:
             pass
 

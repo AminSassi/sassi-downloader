@@ -6,7 +6,6 @@ from .enums import State, ErrorClass, classify_error
 from .cache import ServerCache, ErrorChain
 from .verifier import ChunkVerifier, IntegrityValidator
 from .scheduler import AdaptiveConcurrency, HostLimiter, UIUpdater, BandwidthScheduler
-from .task import DownloadTask
 
 COOKIE_FILE = os.path.join(os.path.expanduser("~"), ".sassi_cookies.txt")
 
