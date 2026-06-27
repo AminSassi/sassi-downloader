@@ -1,5 +1,5 @@
-import tkinter as tk
-from tkinter import ttk, filedialog
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
 import threading
 import os
 import sys
@@ -11,173 +11,462 @@ from core.history import AtomicHistory
 
 HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".sassi_history.json")
 
-BG = "#0F1115"
-BG_CARD = "#171B22"
-BG_INPUT = "#1E222D"
-FG = "#F0F0F0"
-FG_DIM = "#9CA3AF"
+ctk.set_appearance_mode("light")
+ctk.set_default_color_theme("blue")
+
+FG = "#333333"
+FG_DIM = "#888888"
 ACCENT = "#3B82F6"
 GREEN = "#22C55E"
 YELLOW = "#EAB308"
 ORANGE = "#F97316"
 RED = "#EF4444"
-BORDER = "#232833"
+BORDER = "#E0E0E0"
+BG_MAIN = "#F5F5F5"
+BG_CARD = "#FFFFFF"
+BG_SIDEBAR = "#FAFAFA"
+BG_INPUT = "#F0F0F0"
+ROW_ALT = "#FAFAFA"
+ROW_HOVER = "#F0F4FF"
+TAG_COLORS = {
+    "Application": "#3B82F6",
+    "Movie": "#EF4444",
+    "Music": "#22C55E",
+    "Picture": "#F59E0B",
+    "Other": "#8B5CF6",
+}
 
 
 def fmt_size(b):
-    if b < 1024: return f"{b} B"
-    elif b < 1048576: return f"{b / 1024:.0f} KB"
-    elif b < 1073741824: return f"{b / 1048576:.1f} MB"
-    else: return f"{b / 1073741824:.2f} GB"
+    if b < 1024:
+        return f"{b} B"
+    elif b < 1048576:
+        return f"{b / 1024:.0f} KB"
+    elif b < 1073741824:
+        return f"{b / 1048576:.1f} MB"
+    else:
+        return f"{b / 1073741824:.2f} GB"
+
+
+def fmt_speed(b):
+    if b < 1024:
+        return f"{b:.0f} B/s"
+    elif b < 1048576:
+        return f"{b / 1024:.0f} KB/s"
+    elif b < 1073741824:
+        return f"{b / 1048576:.1f} MB/s"
+    else:
+        return f"{b / 1073741824:.2f} GB/s"
+
+
+class SidebarItem(ctk.CTkFrame):
+    def __init__(self, master, icon, text, count=0, active=False, tag_color=None, **kwargs):
+        super().__init__(master, fg_color="transparent", height=36, **kwargs)
+        self.pack_propagate(False)
+
+        self.active = active
+        self.text = text
+        self.count = count
+        self.on_click = None
+
+        self.configure(cursor="hand2")
+        self.bind("<Button-1>", self._click)
+
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="x", padx=12, pady=2)
+
+        if tag_color:
+            dot = ctk.CTkLabel(row, text="", width=8, height=8, fg_color=tag_color,
+                               corner_radius=4, text_color="white")
+            dot.pack(side="left", padx=(0, 8))
+            dot.bind("<Button-1>", self._click)
+
+        self.icon_label = ctk.CTkLabel(row, text=icon, font=ctk.CTkFont(size=14),
+                                        width=20, text_color=ACCENT if active else FG_DIM, anchor="w")
+        self.icon_label.pack(side="left")
+        self.icon_label.bind("<Button-1>", self._click)
+
+        self.text_label = ctk.CTkLabel(row, text=text,
+                                        font=ctk.CTkFont(size=13, weight="bold" if active else "normal"),
+                                        text_color=ACCENT if active else FG, anchor="w")
+        self.text_label.pack(side="left", padx=(4, 0), fill="x", expand=True)
+        self.text_label.bind("<Button-1>", self._click)
+
+        if count > 0:
+            self.count_label = ctk.CTkLabel(row, text=str(count),
+                                              font=ctk.CTkFont(size=11),
+                                              text_color=FG_DIM, width=24)
+            self.count_label.pack(side="right")
+            self.count_label.bind("<Button-1>", self._click)
+
+    def _click(self, event=None):
+        if self.on_click:
+            self.on_click(self.text)
+
+    def set_active(self, active):
+        self.active = active
+        color = ACCENT if active else FG_DIM
+        self.icon_label.configure(text_color=color)
+        self.text_label.configure(text_color=ACCENT if active else FG,
+                                   font=ctk.CTkFont(size=13, weight="bold" if active else "normal"))
+
+    def set_count(self, count):
+        self.count = count
+        if hasattr(self, "count_label"):
+            self.count_label.configure(text=str(count) if count > 0 else "")
+
+
+class AddTaskDialog(ctk.CTkToplevel):
+    def __init__(self, parent, dl_path, on_save):
+        super().__init__(parent)
+        self.title("Task Properties")
+        self.geometry("520x480")
+        self.resizable(False, False)
+        self.configure(fg_color=BG_CARD)
+        self.transient(parent)
+        self.grab_set()
+
+        self.on_save = on_save
+        self.result = None
+
+        x = parent.winfo_x() + (parent.winfo_width() - 520) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - 480) // 2
+        self.geometry(f"+{x}+{y}")
+
+        pad = {"padx": 20, "pady": (10, 0)}
+
+        title_bar = ctk.CTkFrame(self, fg_color=BG_CARD, height=40)
+        title_bar.pack(fill="x", padx=20, pady=(15, 0))
+
+        dot_frame = ctk.CTkFrame(title_bar, fg_color="transparent")
+        dot_frame.pack(side="left")
+        for color in ["#FF5F56", "#FFBD2E", "#27C93F"]:
+            ctk.CTkLabel(dot_frame, text="", width=12, height=12,
+                         fg_color=color, corner_radius=6).pack(side="left", padx=(0, 6))
+
+        ctk.CTkLabel(title_bar, text="Task Properties",
+                      font=ctk.CTkFont(size=14, weight="bold"),
+                      text_color=FG).pack(side="left", padx=(10, 0))
+
+        tab_frame = ctk.CTkFrame(self, fg_color="transparent")
+        tab_frame.pack(fill="x", **pad)
+
+        self.tab_var = ctk.StringVar(value="URL")
+        self.tab_url = ctk.CTkButton(tab_frame, text="URL", width=120, height=32,
+                                      fg_color=ACCENT, hover_color=ACCENT,
+                                      font=ctk.CTkFont(size=12, weight="bold"),
+                                      command=lambda: self._select_tab("URL"))
+        self.tab_url.pack(side="left", padx=(0, 4))
+        self.tab_torrent = ctk.CTkButton(tab_frame, text="Torrent", width=120, height=32,
+                                          fg_color=BG_INPUT, hover_color=BORDER,
+                                          text_color=FG_DIM,
+                                          font=ctk.CTkFont(size=12),
+                                          command=lambda: self._select_tab("Torrent"))
+        self.tab_torrent.pack(side="left")
+
+        ctk.CTkLabel(self, text="URL", font=ctk.CTkFont(size=12, weight="bold"),
+                      text_color=FG, anchor="w").pack(fill="x", **pad)
+
+        self.url_entry = ctk.CTkEntry(self, height=36, placeholder_text="Type your url(s) here",
+                                       fg_color=BG_INPUT, border_color=BORDER,
+                                       text_color=FG, font=ctk.CTkFont(size=12))
+        self.url_entry.pack(fill="x", padx=20, pady=(4, 0))
+
+        save_frame = ctk.CTkFrame(self, fg_color="transparent")
+        save_frame.pack(fill="x", padx=20, pady=(10, 0))
+        ctk.CTkLabel(save_frame, text="Save to:", font=ctk.CTkFont(size=12, weight="bold"),
+                      text_color=FG, width=70, anchor="w").pack(side="left")
+        self.save_entry = ctk.CTkEntry(save_frame, height=30, fg_color=BG_INPUT,
+                                        border_color=BORDER, text_color=FG,
+                                        font=ctk.CTkFont(size=11))
+        self.save_entry.pack(side="left", fill="x", expand=True, padx=(4, 4))
+        self.save_entry.insert(0, dl_path)
+        browse_btn = ctk.CTkButton(save_frame, text="...", width=30, height=30,
+                                    fg_color=BG_INPUT, hover_color=BORDER,
+                                    text_color=FG, command=self._browse)
+        browse_btn.pack(side="right")
+
+        rename_frame = ctk.CTkFrame(self, fg_color="transparent")
+        rename_frame.pack(fill="x", padx=20, pady=(8, 0))
+        ctk.CTkLabel(rename_frame, text="Rename:", font=ctk.CTkFont(size=12, weight="bold"),
+                      text_color=FG, width=70, anchor="w").pack(side="left")
+        self.rename_entry = ctk.CTkEntry(rename_frame, height=30, fg_color=BG_INPUT,
+                                          border_color=BORDER, text_color=FG,
+                                          font=ctk.CTkFont(size=11))
+        self.rename_entry.pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+        tag_frame = ctk.CTkFrame(self, fg_color="transparent")
+        tag_frame.pack(fill="x", padx=20, pady=(8, 0))
+        ctk.CTkLabel(tag_frame, text="Tags:", font=ctk.CTkFont(size=12, weight="bold"),
+                      text_color=FG, width=70, anchor="w").pack(side="left")
+        self.tag_var = ctk.StringVar(value="Movie")
+        self.tag_menu = ctk.CTkOptionMenu(tag_frame, variable=self.tag_var,
+                                           values=list(TAG_COLORS.keys()),
+                                           width=120, height=30,
+                                           fg_color=BG_INPUT, button_color=BORDER,
+                                           text_color=FG, dropdown_fg_color=BG_CARD,
+                                           font=ctk.CTkFont(size=11))
+        self.tag_menu.pack(side="left", padx=(4, 10))
+
+        ctk.CTkLabel(tag_frame, text="Splits:", font=ctk.CTkFont(size=12, weight="bold"),
+                      text_color=FG).pack(side="left")
+        self.splits_var = ctk.StringVar(value="32")
+        self.splits_menu = ctk.CTkOptionMenu(tag_frame, variable=self.splits_var,
+                                              values=["4", "8", "16", "32", "64"],
+                                              width=70, height=30,
+                                              fg_color=BG_INPUT, button_color=BORDER,
+                                              text_color=FG, dropdown_fg_color=BG_CARD,
+                                              font=ctk.CTkFont(size=11))
+        self.splits_menu.pack(side="left", padx=(4, 0))
+
+        adv = ctk.CTkLabel(self, text="Advanced Options", font=ctk.CTkFont(size=11),
+                            text_color=ACCENT, cursor="hand2")
+        adv.pack(anchor="w", padx=20, pady=(12, 0))
+
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=(20, 20))
+
+        ctk.CTkButton(btn_frame, text="Cancel", width=100, height=34,
+                       fg_color=BG_INPUT, hover_color=BORDER, text_color=FG,
+                       font=ctk.CTkFont(size=12), command=self.destroy).pack(side="right", padx=(4, 0))
+        ctk.CTkButton(btn_frame, text="Save", width=100, height=34,
+                       fg_color=ACCENT, hover_color="#2563EB",
+                       font=ctk.CTkFont(size=12, weight="bold"),
+                       command=self._save).pack(side="right")
+
+    def _select_tab(self, tab):
+        self.tab_var.set(tab)
+        if tab == "URL":
+            self.tab_url.configure(fg_color=ACCENT, text_color="white",
+                                    font=ctk.CTkFont(size=12, weight="bold"))
+            self.tab_torrent.configure(fg_color=BG_INPUT, text_color=FG_DIM,
+                                        font=ctk.CTkFont(size=12))
+        else:
+            self.tab_torrent.configure(fg_color=ACCENT, text_color="white",
+                                        font=ctk.CTkFont(size=12, weight="bold"))
+            self.tab_url.configure(fg_color=BG_INPUT, text_color=FG_DIM,
+                                    font=ctk.CTkFont(size=12))
+
+    def _browse(self):
+        path = filedialog.askdirectory()
+        if path:
+            self.save_entry.delete(0, "end")
+            self.save_entry.insert(0, path)
+
+    def _save(self):
+        url = self.url_entry.get().strip()
+        if not url:
+            messagebox.showwarning("Missing URL", "Please enter a URL")
+            return
+        self.result = {
+            "url": url,
+            "save_to": self.save_entry.get().strip(),
+            "rename": self.rename_entry.get().strip(),
+            "tag": self.tag_var.get(),
+            "splits": int(self.splits_var.get()),
+        }
+        self.on_save(self.result)
+        self.destroy()
+
+
+class DownloadRow(ctk.CTkFrame):
+    def __init__(self, master, task, on_pause, on_cancel, on_resume, **kwargs):
+        super().__init__(master, fg_color=BG_CARD, corner_radius=6, height=52, **kwargs)
+        self.pack_propagate(False)
+        self.task = task
+        self.selected = False
+
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+
+        self.checkbox_var = ctk.BooleanVar(value=False)
+        self.checkbox = ctk.CTkCheckBox(self, text="", variable=self.checkbox_var,
+                                         width=20, checkbox_width=18, checkbox_height=18,
+                                         fg_color=ACCENT, hover_color=ACCENT,
+                                         border_color=BORDER)
+        self.checkbox.pack(side="left", padx=(12, 8), pady=0)
+
+        info_frame = ctk.CTkFrame(self, fg_color="transparent")
+        info_frame.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        self.title_label = ctk.CTkLabel(info_frame, text="Queued...",
+                                         font=ctk.CTkFont(size=12, weight="bold"),
+                                         text_color=FG, anchor="w")
+        self.title_label.pack(fill="x")
+
+        self.status_label = ctk.CTkLabel(info_frame, text="Waiting...",
+                                           font=ctk.CTkFont(size=10),
+                                           text_color=FG_DIM, anchor="w")
+        self.status_label.pack(fill="x")
+
+        prog_frame = ctk.CTkFrame(self, fg_color="transparent", width=160)
+        prog_frame.pack(side="left", padx=(0, 12))
+        prog_frame.pack_propagate(False)
+
+        self.progress_bar = ctk.CTkProgressBar(prog_frame, width=150, height=8,
+                                                fg_color="#E8E8E8", progress_color=ACCENT,
+                                                corner_radius=4)
+        self.progress_bar.pack(pady=(8, 2))
+        self.progress_bar.set(0)
+
+        self.progress_label = ctk.CTkLabel(prog_frame, text="0%",
+                                            font=ctk.CTkFont(size=10),
+                                            text_color=FG_DIM)
+        self.progress_label.pack()
+
+        self.speed_label = ctk.CTkLabel(self, text="",
+                                         font=ctk.CTkFont(size=11),
+                                         text_color=FG_DIM, width=80, anchor="e")
+        self.speed_label.pack(side="left", padx=(0, 12))
+
+        self.size_label = ctk.CTkLabel(self, text="",
+                                        font=ctk.CTkFont(size=11),
+                                        text_color=FG_DIM, width=70, anchor="e")
+        self.size_label.pack(side="left", padx=(0, 8))
+
+        ctrl_frame = ctk.CTkFrame(self, fg_color="transparent", width=70)
+        ctrl_frame.pack(side="right", padx=(0, 8))
+        ctrl_frame.pack_propagate(False)
+
+        btn_row = ctk.CTkFrame(ctrl_frame, fg_color="transparent")
+        btn_row.pack(expand=True)
+
+        self.pause_btn = ctk.CTkButton(btn_row, text="", width=28, height=28,
+                                        fg_color="transparent", hover_color="#F0F0F0",
+                                        text_color=FG_DIM, font=ctk.CTkFont(size=14),
+                                        command=lambda: on_pause(task))
+        self.pause_btn.pack(side="left", padx=(0, 2))
+
+        self.cancel_btn = ctk.CTkButton(btn_row, text="", width=28, height=28,
+                                         fg_color="transparent", hover_color="#FEE2E2",
+                                         text_color=RED, font=ctk.CTkFont(size=14),
+                                         command=lambda: on_cancel(task))
+        self.cancel_btn.pack(side="left")
+
+        self._on_pause = on_pause
+        self._on_cancel = on_cancel
+        self._on_resume = on_resume
+        self._update_icons()
+
+    def _update_icons(self):
+        if self.task.state == State.PAUSED:
+            self.pause_btn.configure(text="")
+        else:
+            self.pause_btn.configure(text="")
+
+    def _on_enter(self, event=None):
+        if not self.selected:
+            self.configure(fg_color=ROW_HOVER)
+
+    def _on_leave(self, event=None):
+        if not self.selected:
+            self.configure(fg_color=BG_CARD)
+
+    def update_task(self, task):
+        self.task = task
+        self._update_icons()
+
+        state_colors = {
+            State.DOWNLOADING: ACCENT,
+            State.CONNECTING: ACCENT,
+            State.QUEUED: FG_DIM,
+            State.PAUSED: YELLOW,
+            State.RETRYING: ORANGE,
+            State.COMPLETED: GREEN,
+            State.FAILED: RED,
+            State.CANCELLED: RED,
+        }
+
+        state_texts = {
+            State.DOWNLOADING: "Downloading",
+            State.CONNECTING: "Connecting...",
+            State.QUEUED: "Queued",
+            State.PAUSED: "Paused",
+            State.RETRYING: f"Retry {task.retries}/{task.max_retries}",
+            State.COMPLETED: "Completed",
+            State.FAILED: "Failed",
+            State.CANCELLED: "Cancelled",
+        }
+
+        color = state_colors.get(task.state, FG_DIM)
+        text = state_texts.get(task.state, "Unknown")
+
+        if task.title:
+            self.title_label.configure(text=task.title[:50])
+
+        if task.state == State.DOWNLOADING:
+            pct = task.progress / 100
+            self.progress_bar.set(pct)
+            self.progress_label.configure(text=f"{task.progress:.0f}%")
+            self.progress_bar.configure(progress_color=ACCENT)
+            parts = []
+            if task.speed > 0:
+                parts.append(fmt_speed(task.speed))
+            if task.filesize > 0 and task.downloaded > 0:
+                parts.append(fmt_size(task.filesize - task.downloaded) + " left")
+            elif task.filesize > 0:
+                parts.append(fmt_size(task.filesize))
+            self.status_label.configure(text=text, fg_color=color)
+            self.speed_label.configure(text=fmt_speed(task.speed) if task.speed > 0 else "")
+            self.size_label.configure(text=fmt_size(task.filesize) if task.filesize > 0 else "")
+        elif task.state == State.COMPLETED:
+            self.progress_bar.set(1)
+            self.progress_bar.configure(progress_color=GREEN)
+            self.progress_label.configure(text="100%")
+            self.status_label.configure(text=text, text_color=GREEN)
+            self.speed_label.configure(text="")
+            actual = 0
+            if task.filename and os.path.exists(task.filename):
+                actual = os.path.getsize(task.filename)
+            elif task.filesize > 0:
+                actual = task.filesize
+            self.size_label.configure(text=fmt_size(actual) if actual > 0 else "")
+        elif task.state in (State.FAILED, State.CANCELLED):
+            self.progress_bar.configure(progress_color=RED)
+            self.status_label.configure(text=task.error[:40] if task.error else text, text_color=RED)
+            self.speed_label.configure(text="")
+        elif task.state == State.PAUSED:
+            self.status_label.configure(text="Paused", text_color=YELLOW)
+            self.speed_label.configure(text="")
+        elif task.state == State.RETRYING:
+            self.status_label.configure(text=f"Retrying... ({task.retries}/{task.max_retries})", text_color=ORANGE)
+            self.speed_label.configure(text="")
+        elif task.state == State.CONNECTING:
+            self.status_label.configure(text="Connecting...", text_color=ACCENT)
+            self.speed_label.configure(text="")
+        else:
+            self.status_label.configure(text=text, text_color=color)
+            self.speed_label.configure(text="")
+
+        if task.state in (State.COMPLETED, State.FAILED, State.CANCELLED):
+            self.pause_btn.configure(state="disabled")
+            self.cancel_btn.configure(state="disabled")
 
 
 class SassiDownloader:
     def __init__(self, root):
         self.root = root
-        self.root.title("Sassi")
-        self.root.configure(bg=BG)
-        self.root.resizable(True, True)
-        self.root.minsize(600, 500)
+        self.root.title("Sassi Downloader")
+        self.root.configure(fg_color=BG_MAIN)
 
-        # Fit to screen
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
-        wh = min(720, sh - 80)
-        ww = min(700, sw - 100)
+        ww = min(950, sw - 100)
+        wh = min(650, sh - 80)
         x = (sw - ww) // 2
         y = (sh - wh) // 2
         self.root.geometry(f"{ww}x{wh}+{x}+{y}")
+        self.root.minsize(750, 500)
 
         self.engine = DownloadEngine()
         self.history = AtomicHistory(HISTORY_FILE)
         self.formats = []
-        self.cards = {}
         self.video_info = None
         self.dl_path = self._default_path()
+        self.rows = {}
+        self.tasks = []
+        self.active_filter = "All"
         self._build()
-
-    def _build(self):
-        main = tk.Frame(self.root, bg=BG)
-        main.pack(fill=tk.BOTH, expand=True)
-
-        # ── Header ──
-        hdr = tk.Frame(main, bg=BG)
-        hdr.pack(fill=tk.X, padx=28, pady=(20, 0))
-        tk.Label(hdr, text="SASSI", font=("Segoe UI", 24, "bold"),
-                 fg=FG, bg=BG).pack(anchor=tk.W)
-        tk.Label(hdr, text="Download videos from hundreds of websites",
-                 font=("Segoe UI", 11), fg=FG_DIM, bg=BG).pack(anchor=tk.W, pady=(1, 0))
-        tk.Label(hdr, text="YouTube \u00b7 TikTok \u00b7 Instagram \u00b7 X \u00b7 Facebook \u00b7 Reddit \u00b7 Vimeo",
-                 font=("Segoe UI", 9), fg="#4B5563", bg=BG).pack(anchor=tk.W, pady=(4, 0))
-
-        # ── URL Input ──
-        url_frame = tk.Frame(main, bg=BG)
-        url_frame.pack(fill=tk.X, padx=28, pady=(16, 0))
-
-        url_box = tk.Frame(url_frame, bg=BG_INPUT, highlightbackground=BORDER,
-                           highlightthickness=1)
-        url_box.pack(fill=tk.X)
-
-        self.url_entry = tk.Entry(url_box, font=("Segoe UI", 13), bg=BG_INPUT, fg=FG,
-                                   insertbackground=FG, relief=tk.FLAT, highlightthickness=0)
-        self.url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(12, 0), pady=10)
-        self.url_entry.bind("<Return>", lambda e: self.analyze())
-
-        self.analyze_btn = tk.Button(url_box, text="Fetch Info", font=("Segoe UI", 11, "bold"),
-                                      bg=ACCENT, fg="#FFF", relief=tk.FLAT, cursor="hand2",
-                                      activebackground="#2563EB", command=self.analyze,
-                                      padx=14, pady=6)
-        self.analyze_btn.pack(side=tk.RIGHT, padx=(0, 8), pady=8)
-
-        # ── Status ──
-        self.status_label = tk.Label(main, text="Paste a URL above to get started",
-                                      font=("Segoe UI", 10), fg=FG_DIM, bg=BG)
-        self.status_label.pack(anchor=tk.W, padx=28, pady=(6, 0))
-
-        # ── Preview Card (hidden) ──
-        self.preview_card = tk.Frame(main, bg=BG_CARD, highlightbackground=BORDER,
-                                      highlightthickness=1)
-
-        preview_inner = tk.Frame(self.preview_card, bg=BG_CARD)
-        preview_inner.pack(fill=tk.X, padx=16, pady=12)
-
-        self.preview_thumb = tk.Label(preview_inner, text="\U0001F3AC",
-                                       font=("Segoe UI", 32), bg=BG_CARD, fg=FG_DIM,
-                                       width=4, anchor=tk.CENTER)
-        self.preview_thumb.pack(side=tk.LEFT, padx=(0, 12))
-
-        preview_right = tk.Frame(preview_inner, bg=BG_CARD)
-        preview_right.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        self.preview_title = tk.Label(preview_right, text="", font=("Segoe UI", 12, "bold"),
-                                       fg=FG, bg=BG_CARD, anchor=tk.W, wraplength=360)
-        self.preview_title.pack(anchor=tk.W)
-
-        self.preview_meta = tk.Label(preview_right, text="", font=("Segoe UI", 10),
-                                      fg=FG_DIM, bg=BG_CARD, anchor=tk.W)
-        self.preview_meta.pack(anchor=tk.W, pady=(2, 0))
-
-        # ── Options (hidden) ──
-        self.opts_frame = tk.Frame(self.preview_card, bg=BG_CARD)
-        opts_inner = tk.Frame(self.opts_frame, bg=BG_CARD)
-        opts_inner.pack(fill=tk.X, padx=16, pady=(0, 12))
-
-        tk.Label(opts_inner, text="Quality", font=("Segoe UI", 10), fg=FG_DIM, bg=BG_CARD).pack(side=tk.LEFT)
-        self.quality_var = tk.StringVar(value="Best")
-        self.q_menu = ttk.Combobox(opts_inner, textvariable=self.quality_var,
-                                    state="readonly", width=14, font=("Segoe UI", 10))
-        self.q_menu.pack(side=tk.LEFT, padx=(6, 0))
-
-        self.dl_btn = tk.Button(opts_inner, text="Download", font=("Segoe UI", 11, "bold"),
-                                 bg=GREEN, fg="#FFF", relief=tk.FLAT, cursor="hand2",
-                                 activebackground="#16A34A", command=self.download,
-                                 padx=18, pady=6)
-        self.dl_btn.pack(side=tk.RIGHT)
-
-        # ── Active Downloads ──
-        dl_header = tk.Frame(main, bg=BG)
-        dl_header.pack(fill=tk.X, padx=28, pady=(16, 6))
-        tk.Label(dl_header, text="Active Downloads", font=("Segoe UI", 12, "bold"),
-                 fg=FG, bg=BG).pack(side=tk.LEFT)
-
-        dl_outer = tk.Frame(main, bg=BG)
-        self.dl_canvas = tk.Canvas(dl_outer, bg=BG, highlightthickness=0)
-        self.dl_scroll = tk.Scrollbar(dl_outer, orient=tk.VERTICAL, command=self.dl_canvas.yview)
-        self.dl_frame = tk.Frame(self.dl_canvas, bg=BG)
-        self.dl_frame.bind("<Configure>", lambda e: self.dl_canvas.configure(scrollregion=self.dl_canvas.bbox("all")))
-        self.dl_canvas.create_window((0, 0), window=self.dl_frame, anchor=tk.NW)
-        self.dl_canvas.configure(yscrollcommand=self.dl_scroll.set)
-        self.dl_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.dl_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # Empty state
-        self.empty_frame = tk.Frame(self.dl_frame, bg=BG)
-        self.empty_frame.pack(fill=tk.X, pady=16)
-        tk.Label(self.empty_frame, text="\u2B07", font=("Segoe UI", 24), fg="#232833", bg=BG).pack()
-        tk.Label(self.empty_frame, text="No active downloads", font=("Segoe UI", 11),
-                 fg=FG_DIM, bg=BG).pack(pady=(4, 0))
-
-        # ── History ──
-        hist_header = tk.Frame(main, bg=BG)
-        hist_header.pack(fill=tk.X, padx=28, pady=(12, 6))
-        tk.Label(hist_header, text="Recent", font=("Segoe UI", 12, "bold"),
-                 fg=FG, bg=BG).pack(side=tk.LEFT)
-
-        self.hist_frame = tk.Frame(main, bg=BG_CARD, highlightbackground=BORDER,
-                                    highlightthickness=1, height=120)
-        self.hist_frame.pack(fill=tk.X, padx=28, pady=(0, 16))
-        self.hist_frame.pack_propagate(False)
-
-        self.hist_canvas = tk.Canvas(self.hist_frame, bg=BG_CARD, highlightthickness=0)
-        self.hist_scroll = tk.Scrollbar(self.hist_frame, orient=tk.VERTICAL, command=self.hist_canvas.yview)
-        self.hist_inner = tk.Frame(self.hist_canvas, bg=BG_CARD)
-        self.hist_inner.bind("<Configure>", lambda e: self.hist_canvas.configure(scrollregion=self.hist_canvas.bbox("all")))
-        self.hist_canvas.create_window((0, 0), window=self.hist_inner, anchor=tk.NW)
-        self.hist_canvas.configure(yscrollcommand=self.hist_scroll.set)
-        self.hist_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.hist_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self._refresh_hist()
 
     def _default_path(self):
         if sys.platform == "win32":
@@ -188,263 +477,301 @@ class SassiDownloader:
                 p = winreg.QueryValueEx(k, "{374DE290-123F-4565-9164-39C4925E467B}")[0]
                 winreg.CloseKey(k)
                 return p
-            except: pass
+            except:
+                pass
         return os.path.join(os.path.expanduser("~"), "Downloads")
 
-    def _show_preview(self):
-        self.preview_card.pack(fill=tk.X, padx=28, pady=(10, 0))
-        self.opts_frame.pack(fill=tk.X)
+    def _build(self):
+        container = ctk.CTkFrame(self.root, fg_color=BG_MAIN)
+        container.pack(fill="both", expand=True)
 
-    def _hide_preview(self):
-        self.preview_card.pack_forget()
-        self.opts_frame.pack_forget()
+        self.sidebar = ctk.CTkFrame(container, fg_color=BG_SIDEBAR, width=200, corner_radius=0)
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
 
-    def _refresh_hist(self):
-        for w in self.hist_inner.winfo_children():
-            w.destroy()
-        items = self.history.items[:6]
-        if not items:
-            tk.Label(self.hist_inner, text="No downloads yet", font=("Segoe UI", 10),
-                     fg="#4B5563", bg=BG_CARD).pack(pady=10)
-            return
-        for i, item in enumerate(items):
-            row = tk.Frame(self.hist_inner, bg=BG_CARD)
-            row.pack(fill=tk.X, padx=10, pady=(6 if i == 0 else 2, 0))
-            tk.Label(row, text="\u2713", font=("Segoe UI", 10), fg=GREEN, bg=BG_CARD).pack(side=tk.LEFT, padx=(0, 6))
-            title = item.get('title', 'Unknown')[:36]
-            tk.Label(row, text=title, font=("Segoe UI", 9), fg=FG, bg=BG_CARD, anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
-            size = fmt_size(item.get('size', 0)) if item.get('size', 0) > 0 else ""
-            tk.Label(row, text=size, font=("Segoe UI", 9), fg=FG_DIM, bg=BG_CARD).pack(side=tk.RIGHT)
+        content = ctk.CTkFrame(container, fg_color=BG_MAIN)
+        content.pack(side="left", fill="both", expand=True)
 
-    def analyze(self):
-        url = self.url_entry.get().strip()
-        if not url:
-            self.status_label.config(text="Paste a URL first", fg=YELLOW)
-            return
-        self.analyze_btn.config(text="...", state=tk.DISABLED)
-        self.status_label.config(text="Fetching info...", fg=ACCENT)
-        self._hide_preview()
+        self._build_sidebar()
+        self._build_content(content)
 
-        def work():
-            try:
-                o = {'quiet': True, 'no_warnings': True, 'skip_download': True}
-                with yt_dlp.YoutubeDL(o) as y:
-                    info = y.extract_info(url, download=False)
-                fmts = [("Best (auto)", "best")]
-                seen = {"best"}
-                for f in info.get('formats', []):
-                    h = f.get('height')
-                    ext = f.get('ext', '')
-                    vc = f.get('vcodec', 'none')
-                    if vc != 'none' and h and h >= 360:
-                        l = f"{h}p ({ext.upper()})"
-                        if l not in seen:
-                            seen.add(l)
-                            fmts.append((l, f['format_id']))
-                fmts.sort(key=lambda x: int(x[0].split('p')[0]) if x[1] != "best" else 99999, reverse=True)
-                self.formats = fmts
-                self.video_info = info
-                self.root.after(0, self._analyze_ok, info)
-            except Exception as e:
-                self.root.after(0, self._analyze_err, str(e))
-        threading.Thread(target=work, daemon=True).start()
+    def _build_sidebar(self):
+        logo_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        logo_frame.pack(fill="x", padx=16, pady=(20, 24))
 
-    def _analyze_ok(self, info):
-        self.analyze_btn.config(text="Fetch Info", state=tk.NORMAL)
-        title = info.get('title', 'Unknown')
-        dur = info.get('duration', 0)
-        h = info.get('height', 0)
-        w = info.get('width', 0)
-        fs = info.get('filesize', 0) or info.get('filesize_approx', 0) or 0
+        ctk.CTkLabel(logo_frame, text="SASSI",
+                      font=ctk.CTkFont(size=20, weight="bold"),
+                      text_color=ACCENT, anchor="w").pack(anchor="w")
 
-        dur_s = f"{dur // 60}:{dur % 60:02d}" if dur else ""
-        res = f"{w}x{h}" if h else ""
-        sz = fmt_size(fs) if fs else ""
-        ext = (info.get('ext', 'mp4') or 'mp4').upper()
+        tasks_header = ctk.CTkLabel(self.sidebar, text="Tasks",
+                                      font=ctk.CTkFont(size=11, weight="bold"),
+                                      text_color=FG_DIM, anchor="w")
+        tasks_header.pack(fill="x", padx=16, pady=(0, 4))
 
-        parts = [p for p in [ext, res, dur_s, sz] if p]
+        self.sidebar_items = {}
+        task_filters = [
+            ("", "All"),
+            ("", "Running"),
+            ("", "Suspended"),
+            ("", "Complete"),
+            ("", "Incomplete"),
+        ]
+        for icon, label in task_filters:
+            item = SidebarItem(self.sidebar, icon, label, active=(label == "All"))
+            item.pack(fill="x")
+            item.on_click = self._filter_changed
+            self.sidebar_items[label] = item
 
-        self.preview_title.config(text=title)
-        self.preview_meta.config(text="  \u00b7  ".join(parts))
-        self.q_menu['values'] = [f[0] for f in self.formats]
-        self.q_menu.current(0)
-        self._show_preview()
-        self.status_label.config(text="Ready to download", fg=GREEN)
+        sched_header = ctk.CTkLabel(self.sidebar, text="Schedules",
+                                      font=ctk.CTkFont(size=11, weight="bold"),
+                                      text_color=FG_DIM, anchor="w")
+        sched_header.pack(fill="x", padx=16, pady=(16, 4))
 
-    def _analyze_err(self, error):
-        self.analyze_btn.config(text="Fetch Info", state=tk.NORMAL)
-        self.status_label.config(text=f"Failed: {error[:60]}", fg=RED)
+        for icon, label in [("", "Waiting"), ("", "Complete")]:
+            item = SidebarItem(self.sidebar, icon, label)
+            item.pack(fill="x")
 
-    def download(self):
-        url = self.url_entry.get().strip()
-        if not url:
-            self.status_label.config(text="Paste a URL first", fg=YELLOW)
-            return
-        if not self.formats:
-            self.status_label.config(text="Fetch info first", fg=YELLOW)
-            return
+        tags_header = ctk.CTkLabel(self.sidebar, text="Tags",
+                                     font=ctk.CTkFont(size=11, weight="bold"),
+                                     text_color=FG_DIM, anchor="w")
+        tags_header.pack(fill="x", padx=16, pady=(16, 4))
 
-        self.dl_btn.config(text="Starting...", state=tk.DISABLED)
-        self.status_label.config(text="Starting download...", fg=ACCENT)
+        for tag, color in TAG_COLORS.items():
+            item = SidebarItem(self.sidebar, "", tag, tag_color=color)
+            item.pack(fill="x")
 
-        i = self.q_menu.current()
-        q = self.formats[i][1] if i >= 0 else "best"
-        pri = Priority.NORMAL
+    def _build_content(self, parent):
+        header = ctk.CTkFrame(parent, fg_color="transparent")
+        header.pack(fill="x", padx=20, pady=(16, 0))
 
-        self.empty_frame.pack_forget()
+        left_header = ctk.CTkFrame(header, fg_color="transparent")
+        left_header.pack(side="left")
 
-        try:
-            task = DownloadTask(url, q, self.dl_path, pri)
-            card = self._make_card(task)
-            self.cards[task.id] = card
-            self.engine.add(task)
-            task._on_update = lambda t: self.root.after(0, self._upd_card, t)
-            task._on_done = lambda t: self.root.after(0, self._done_card, t)
-            task._on_error = lambda t: self.root.after(0, self._err_card, t)
+        self.filter_label = ctk.CTkLabel(left_header, text="All",
+                                           font=ctk.CTkFont(size=18, weight="bold"),
+                                           text_color=FG)
+        self.filter_label.pack(side="left")
 
-            self.url_entry.delete(0, tk.END)
-            self._hide_preview()
-            self.formats = []
-            self.status_label.config(text="Download started", fg=GREEN)
-        except Exception as e:
-            self.status_label.config(text=f"Error: {str(e)[:60]}", fg=RED)
+        self.count_label = ctk.CTkLabel(left_header, text="0",
+                                          font=ctk.CTkFont(size=18, weight="bold"),
+                                          text_color=FG_DIM)
+        self.count_label.pack(side="left", padx=(8, 0))
 
-        self.dl_btn.config(text="Download", state=tk.NORMAL)
+        search_frame = ctk.CTkFrame(header, fg_color="transparent")
+        search_frame.pack(side="left", padx=(20, 0))
 
-    def _make_card(self, task):
-        c = tk.Frame(self.dl_frame, bg=BG_CARD, highlightbackground=BORDER, highlightthickness=1)
-        c.pack(fill=tk.X, pady=(0, 6), ipady=2)
+        self.search_entry = ctk.CTkEntry(search_frame, placeholder_text="Search",
+                                          width=200, height=32,
+                                          fg_color=BG_CARD, border_color=BORDER,
+                                          text_color=FG, font=ctk.CTkFont(size=12))
+        self.search_entry.pack(side="left")
+        self.search_entry.bind("<KeyRelease>", self._on_search)
 
-        inner = tk.Frame(c, bg=BG_CARD)
-        inner.pack(fill=tk.X, padx=12, pady=8)
+        right_header = ctk.CTkFrame(header, fg_color="transparent")
+        right_header.pack(side="right")
 
-        top = tk.Frame(inner, bg=BG_CARD)
-        top.pack(fill=tk.X)
+        btn_style = {"width": 32, "height": 32, "corner_radius": 6,
+                      "fg_color": BG_CARD, "hover_color": "#E8E8E8",
+                      "border_width": 1, "border_color": BORDER,
+                      "text_color": FG}
 
-        dot = tk.Label(top, text="\u25cf", font=("Segoe UI", 7), fg=FG_DIM, bg=BG_CARD)
-        dot.pack(side=tk.LEFT, padx=(0, 6))
+        ctk.CTkButton(right_header, text="+", font=ctk.CTkFont(size=16, weight="bold"),
+                       text_color=ACCENT, command=self._add_task, **btn_style).pack(side="left", padx=(0, 4))
 
-        title = tk.Label(top, text="Queued...", font=("Segoe UI", 11, "bold"),
-                          fg=FG, bg=BG_CARD, anchor=tk.W)
-        title.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ctk.CTkButton(right_header, text="", font=ctk.CTkFont(size=14),
+                       text_color=RED, command=self._delete_selected, **btn_style).pack(side="left", padx=(0, 4))
 
-        ctrl = tk.Frame(top, bg=BG_CARD)
-        ctrl.pack(side=tk.RIGHT)
-        pause = tk.Button(ctrl, text="\u23f8", font=("Segoe UI", 10), bg=BG_CARD, fg=FG_DIM,
-                           relief=tk.FLAT, cursor="hand2", width=2,
-                           command=lambda: self._toggle_pause(task))
-        pause.pack(side=tk.LEFT, padx=(0, 4))
-        cancel = tk.Button(ctrl, text="\u2715", font=("Segoe UI", 10), bg=BG_CARD, fg=RED,
-                            relief=tk.FLAT, cursor="hand2", width=2,
-                            command=lambda: self._cancel_task(task))
-        cancel.pack(side=tk.LEFT)
+        ctk.CTkButton(right_header, text="", font=ctk.CTkFont(size=14),
+                       text_color=FG_DIM, command=self._refresh_view, **btn_style).pack(side="left")
 
-        prog = tk.Canvas(inner, bg="#232833", height=6, highlightthickness=0)
-        prog.pack(fill=tk.X, pady=(6, 0))
-        bar = prog.create_rectangle(0, 0, 0, 6, fill=ACCENT, width=0)
+        sep = ctk.CTkFrame(parent, fg_color=BORDER, height=1)
+        sep.pack(fill="x", padx=20, pady=(12, 0))
 
-        info = tk.Label(inner, text="Waiting...", font=("Segoe UI", 10),
-                         fg=FG_DIM, bg=BG_CARD, anchor=tk.W)
-        info.pack(fill=tk.X, pady=(4, 0))
+        table_header = ctk.CTkFrame(parent, fg_color="transparent", height=36)
+        table_header.pack(fill="x", padx=20, pady=(8, 0))
+        table_header.pack_propagate(False)
 
-        return {"frame": c, "title": title, "dot": dot,
-                "pause": pause, "cancel": cancel,
-                "prog": prog, "bar": bar, "info": info}
+        ctk.CTkLabel(table_header, text="", width=28).pack(side="left")
+        ctk.CTkLabel(table_header, text="Filename",
+                      font=ctk.CTkFont(size=11, weight="bold"),
+                      text_color=FG_DIM, anchor="w").pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(table_header, text="Status",
+                      font=ctk.CTkFont(size=11, weight="bold"),
+                      text_color=FG_DIM, width=160, anchor="w").pack(side="left")
+        ctk.CTkLabel(table_header, text="Speed",
+                      font=ctk.CTkFont(size=11, weight="bold"),
+                      text_color=FG_DIM, width=80, anchor="e").pack(side="left", padx=(0, 12))
+        ctk.CTkLabel(table_header, text="Size",
+                      font=ctk.CTkFont(size=11, weight="bold"),
+                      text_color=FG_DIM, width=70, anchor="e").pack(side="left", padx=(0, 8))
 
-    def _set_visuals(self, card, state):
-        colors = {
-            State.DOWNLOADING: ACCENT, State.CONNECTING: ACCENT,
-            State.QUEUED: FG_DIM, State.PAUSED: YELLOW,
-            State.RETRYING: ORANGE, State.COMPLETED: GREEN,
-            State.FAILED: RED, State.CANCELLED: RED,
-        }
-        card["dot"].config(fg=colors.get(state, FG_DIM))
-        bg = "#1E222D" if state in (State.COMPLETED, State.FAILED, State.CANCELLED) else BORDER
-        card["frame"].config(highlightbackground=bg)
+        list_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        list_frame.pack(fill="both", expand=True, padx=20, pady=(8, 16))
 
-    def _upd_card(self, task):
-        card = self.cards.get(task.id)
-        if not card:
-            return
-        self._set_visuals(card, task.state)
+        self.scrollable = ctk.CTkScrollableFrame(list_frame, fg_color="transparent",
+                                                   scrollbar_fg_color="transparent",
+                                                   scrollbar_button_color=BORDER,
+                                                   scrollbar_button_hover_color="#CCCCCC")
+        self.scrollable.pack(fill="both", expand=True)
 
-        if task.state == State.PAUSED:
-            card["title"].config(text=task.title[:42] or "Paused")
-            card["info"].config(text="Paused", fg=YELLOW)
-            return
-        if task.state == State.RETRYING:
-            card["title"].config(text=f"Retry {task.retries}/{task.max_retries}")
-            card["info"].config(text=task.error[:46], fg=ORANGE)
-            return
-        if task.state == State.CONNECTING:
-            card["title"].config(text="Connecting...")
-            card["info"].config(text=task.host, fg=FG_DIM)
-            return
+        self.empty_label = ctk.CTkLabel(self.scrollable,
+                                         text="No downloads yet\nClick + to add a new download",
+                                         font=ctk.CTkFont(size=13),
+                                         text_color=FG_DIM)
+        self.empty_label.pack(pady=60)
 
-        pct = task.progress / 100
-        w = card["prog"].winfo_width()
-        card["prog"].coords(card["bar"], 0, 0, max(w * pct, 2), 6)
-        if task.title:
-            card["title"].config(text=task.title[:42])
+    def _filter_changed(self, filter_name):
+        self.active_filter = filter_name
+        self.filter_label.configure(text=filter_name)
+        for name, item in self.sidebar_items.items():
+            item.set_active(name == filter_name)
+        self._refresh_view()
 
-        parts = [f"{task.progress:.0f}%"]
-        if task.speed > 0:
-            parts.append(f"{fmt_size(int(task.speed))}/s")
-        if task.filesize > 0 and task.downloaded > 0:
-            rem = task.filesize - task.downloaded
-            if rem > 0:
-                parts.append(f"{fmt_size(rem)} left")
-        if task.eta:
-            parts.append(task.eta)
-        card["info"].config(text="  \u00b7  ".join(parts), fg=FG_DIM)
+    def _get_filtered_tasks(self):
+        if self.active_filter == "All":
+            return self.tasks
+        elif self.active_filter == "Running":
+            return [t for t in self.tasks if t.state in (State.DOWNLOADING, State.CONNECTING, State.QUEUED)]
+        elif self.active_filter == "Suspended":
+            return [t for t in self.tasks if t.state in (State.PAUSED, State.RETRYING)]
+        elif self.active_filter == "Complete":
+            return [t for t in self.tasks if t.state == State.COMPLETED]
+        elif self.active_filter == "Incomplete":
+            return [t for t in self.tasks if t.state in (State.FAILED, State.CANCELLED)]
+        return self.tasks
 
-    def _done_card(self, task):
-        card = self.cards.get(task.id)
-        if not card:
-            return
-        self._set_visuals(card, State.COMPLETED)
-        w = card["prog"].winfo_width()
-        card["prog"].coords(card["bar"], 0, 0, w, 6)
-        card["prog"].itemconfig(card["bar"], fill=GREEN)
+    def _refresh_view(self):
+        search = self.search_entry.get().strip().lower() if hasattr(self, "search_entry") else ""
+        filtered = self._get_filtered_tasks()
+        if search:
+            filtered = [t for t in filtered if search in (t.title or "").lower() or search in t.url.lower()]
 
-        actual = os.path.getsize(task.filename) if os.path.exists(task.filename) else 0
-        valid, msg = self.engine.integrity.validate_file(task.filename, task.filesize)
+        for row in self.scrollable.winfo_children():
+            row.destroy()
 
-        if valid:
-            card["info"].config(text=f"Completed  \u00b7  {fmt_size(actual)}", fg=GREEN)
+        self.rows.clear()
+
+        if not filtered:
+            self.empty_label = ctk.CTkLabel(self.scrollable,
+                                             text="No downloads yet\nClick + to add a new download",
+                                             font=ctk.CTkFont(size=13),
+                                             text_color=FG_DIM)
+            self.empty_label.pack(pady=60)
         else:
-            card["info"].config(text=f"Error: {msg}", fg=RED)
-        card["pause"].config(state=tk.DISABLED)
-        card["cancel"].config(state=tk.DISABLED)
-        self.engine.ui_updater.cleanup(task.id)
-        if valid:
-            self.history.add(task.title, task.filename, task.filesize)
-            self._refresh_hist()
+            for i, task in enumerate(filtered):
+                row = DownloadRow(self.scrollable, task,
+                                   on_pause=self._toggle_pause,
+                                   on_cancel=self._cancel_task,
+                                   on_resume=self._toggle_pause)
+                row.pack(fill="x", pady=(0, 2))
+                if i % 2 == 1:
+                    row.configure(fg_color=ROW_ALT)
+                self.rows[task.id] = row
 
-    def _err_card(self, task):
-        card = self.cards.get(task.id)
-        if not card:
-            return
-        self._set_visuals(card, State.FAILED)
-        card["prog"].itemconfig(card["bar"], fill=RED)
-        card["info"].config(text=task.error[:56], fg=RED)
-        card["pause"].config(state=tk.DISABLED)
+        self.count_label.configure(text=str(len(filtered)))
+
+        counts = {
+            "All": len(self.tasks),
+            "Running": len([t for t in self.tasks if t.state in (State.DOWNLOADING, State.CONNECTING, State.QUEUED)]),
+            "Suspended": len([t for t in self.tasks if t.state in (State.PAUSED, State.RETRYING)]),
+            "Complete": len([t for t in self.tasks if t.state == State.COMPLETED]),
+            "Incomplete": len([t for t in self.tasks if t.state in (State.FAILED, State.CANCELLED)]),
+        }
+        for name, item in self.sidebar_items.items():
+            item.set_count(counts.get(name, 0))
+
+    def _on_search(self, event=None):
+        self._refresh_view()
+
+    def _add_task(self):
+        dialog = AddTaskDialog(self.root, self.dl_path, self._handle_new_task)
+
+    def _handle_new_task(self, result):
+        url = result["url"]
+        save_to = result["save_to"] or self.dl_path
+        self.dl_path = save_to
+
+        threading.Thread(target=self._analyze_and_add, args=(url, save_to), daemon=True).start()
+
+    def _analyze_and_add(self, url, save_to):
+        try:
+            o = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+            with yt_dlp.YoutubeDL(o) as y:
+                info = y.extract_info(url, download=False)
+
+            fmts = [("Best (auto)", "best")]
+            seen = {"best"}
+            for f in info.get('formats', []):
+                h = f.get('height')
+                ext = f.get('ext', '')
+                vc = f.get('vcodec', 'none')
+                if vc != 'none' and h and h >= 360:
+                    l = f"{h}p ({ext.upper()})"
+                    if l not in seen:
+                        seen.add(l)
+                        fmts.append((l, f['format_id']))
+            fmts.sort(key=lambda x: int(x[0].split('p')[0]) if x[1] != "best" else 99999, reverse=True)
+
+            quality = fmts[0][1] if fmts else "best"
+
+            self.root.after(0, self._start_download, url, quality, save_to, info)
+        except Exception as e:
+            self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to fetch info:\n{str(e)[:200]}"))
+
+    def _start_download(self, url, quality, save_to, info):
+        task = DownloadTask(url, quality, save_to, Priority.NORMAL)
+        task.title = info.get('title', 'Unknown')
+        self.tasks.append(task)
+        self.engine.add(task)
+        task._on_update = lambda t: self.root.after(0, self._update_task, t)
+        task._on_done = lambda t: self.root.after(0, self._done_task, t)
+        task._on_error = lambda t: self.root.after(0, self._error_task, t)
+        self._refresh_view()
+
+    def _update_task(self, task):
+        row = self.rows.get(task.id)
+        if row:
+            row.update_task(task)
+        else:
+            self._refresh_view()
+
+    def _done_task(self, task):
+        row = self.rows.get(task.id)
+        if row:
+            row.update_task(task)
         self.engine.ui_updater.cleanup(task.id)
+        self.history.add(task.title, task.filename, task.filesize)
+        self._refresh_view()
+
+    def _error_task(self, task):
+        row = self.rows.get(task.id)
+        if row:
+            row.update_task(task)
+        self.engine.ui_updater.cleanup(task.id)
+        self._refresh_view()
 
     def _toggle_pause(self, task):
         if task.state == State.PAUSED:
             task.resume()
         elif task.state in (State.DOWNLOADING, State.CONNECTING):
             task.pause()
+        row = self.rows.get(task.id)
+        if row:
+            row.update_task(task)
 
     def _cancel_task(self, task):
         task.cancel()
-        card = self.cards.get(task.id)
-        if card:
-            self._set_visuals(card, State.CANCELLED)
-            card["prog"].itemconfig(card["bar"], fill=RED)
-            card["info"].config(text="Cancelled", fg=RED)
-            card["title"].config(text="Cancelled")
-            card["pause"].config(state=tk.DISABLED)
-            card["cancel"].config(state=tk.DISABLED)
+        row = self.rows.get(task.id)
+        if row:
+            row.update_task(task)
         self.engine.ui_updater.cleanup(task.id)
+
+    def _delete_selected(self):
+        to_remove = []
+        for task in self.tasks:
+            if task.state in (State.COMPLETED, State.FAILED, State.CANCELLED):
+                to_remove.append(task)
+        for task in to_remove:
+            self.tasks.remove(task)
+            self.rows.pop(task.id, None)
+        self._refresh_view()
