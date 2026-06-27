@@ -66,31 +66,29 @@ def show_help_image(title, image_filename):
     win = ctk.CTkToplevel()
     win.title(title)
     win.configure(fg_color="#FFFFFF")
-    win.minsize(400, 300)
+    win.protocol("WM_DELETE_WINDOW", win.destroy)
 
     sw = win.winfo_screenwidth()
     sh = win.winfo_screenheight()
-    win.geometry(f"900x700+{(sw - 900) // 2}+{(sh - 700) // 2}")
+    win_w = min(900, sw - 100)
+    win_h = min(700, sh - 100)
+    win.geometry(f"{win_w}x{win_h}+{(sw - win_w) // 2}+{(sh - win_h) // 2}")
 
-    canvas = ctk.CTkCanvas(win, bg="#FFFFFF", highlightthickness=0)
-    scrollbar = ctk.CTkScrollbar(win, orientation="vertical", command=canvas.yview)
-    scroll_frame = ctk.CTkFrame(canvas, fg_color="#FFFFFF")
+    img_w, img_h = img.size
+    scale = min((win_w - 20) / img_w, (win_h - 20) / img_h, 1.0)
+    new_w = int(img_w * scale)
+    new_h = int(img_h * scale)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
 
-    scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-    canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
-    canvas.configure(yscrollcommand=scrollbar.set)
+    frame = ctk.CTkFrame(win, fg_color="#FFFFFF")
+    frame.pack(fill="both", expand=True)
 
-    canvas.pack(side="left", fill="both", expand=True)
-    scrollbar.pack(side="right", fill="y")
+    canvas = ctk.CTkCanvas(frame, bg="#FFFFFF", highlightthickness=0, width=new_w, height=new_h)
+    canvas.pack(expand=True)
 
     photo = ImageTk.PhotoImage(img)
-    label = ctk.CTkLabel(scroll_frame, image=photo, text="")
-    label.image = photo
-    label.pack(padx=10, pady=10)
-
-    def on_mousewheel(event):
-        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-    canvas.bind_all("<MouseWheel>", on_mousewheel)
+    canvas.create_image(new_w // 2, new_h // 2, image=photo, anchor="center")
+    canvas.image = photo
 
 
 def fmt_size(b):
