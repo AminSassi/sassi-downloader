@@ -10,6 +10,21 @@ from .scheduler import AdaptiveConcurrency, HostLimiter, UIUpdater, BandwidthSch
 COOKIE_FILE = os.path.join(os.path.expanduser("~"), ".sassi_cookies.txt")
 
 
+def _has_ffmpeg():
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['ffmpeg', '-version'], capture_output=True, timeout=5,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+HAS_FFMPEG = _has_ffmpeg()
+
+
 class DownloadEngine:
     def __init__(self):
         self.server_cache = ServerCache()
@@ -120,7 +135,7 @@ class DownloadEngine:
                     'no_playlists': True, 'progress_hooks': [hook],
                     'quiet': True, 'no_warnings': True,
                     'continuedl': True, 'socket_timeout': 20,
-                    'merge_output_format': 'mp4', 'http_chunk_size': 1048576,
+                    'http_chunk_size': 1048576,
                     'extractor_retries': 3,
                     'retries': 3,
                     'fragment_retries': 3,
@@ -132,6 +147,8 @@ class DownloadEngine:
                         'Accept-Language': 'en-US,en;q=0.9',
                     },
                 }
+                if HAS_FFMPEG:
+                    opts['merge_output_format'] = 'mp4'
                 if os.path.exists(COOKIE_FILE):
                     opts['cookiefile'] = COOKIE_FILE
                 splits = getattr(task, 'splits', 32)
@@ -217,6 +234,8 @@ class DownloadEngine:
                     time.sleep(1)
 
     def _build_format(self, task):
+        if not HAS_FFMPEG:
+            return "best[ext=mp4]/best"
         if task.quality == "best":
             return "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
         return f"{task.quality}+bestaudio/best"
