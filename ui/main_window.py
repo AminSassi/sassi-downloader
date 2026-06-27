@@ -38,6 +38,61 @@ TAG_COLORS = {
 }
 
 
+def resource_path(filename):
+    if getattr(sys, 'frozen', False):
+        return os.path.join(sys._MEIPASS, filename)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', filename)
+
+
+def show_help_image(title, image_filename):
+    try:
+        from PIL import Image, ImageTk
+    except ImportError:
+        messagebox.showinfo(title, "Install Pillow to view images: pip install Pillow")
+        return
+
+    path = resource_path(image_filename)
+    if not os.path.exists(path):
+        messagebox.showwarning("Instructions Not Found",
+                                f"The help image could not be found.\n\nPlease place '{image_filename}' next to Sassi Downloader.exe")
+        return
+
+    try:
+        img = Image.open(path)
+    except Exception:
+        messagebox.showwarning("Error", "Could not load the help image.")
+        return
+
+    win = ctk.CTkToplevel()
+    win.title(title)
+    win.configure(fg_color="#FFFFFF")
+    win.minsize(400, 300)
+
+    sw = win.winfo_screenwidth()
+    sh = win.winfo_screenheight()
+    win.geometry(f"900x700+{(sw - 900) // 2}+{(sh - 700) // 2}")
+
+    canvas = ctk.CTkCanvas(win, bg="#FFFFFF", highlightthickness=0)
+    scrollbar = ctk.CTkScrollbar(win, orientation="vertical", command=canvas.yview)
+    scroll_frame = ctk.CTkFrame(canvas, fg_color="#FFFFFF")
+
+    scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    photo = ImageTk.PhotoImage(img)
+    label = ctk.CTkLabel(scroll_frame, image=photo, text="")
+    label.image = photo
+    label.pack(padx=10, pady=10)
+
+    def on_mousewheel(event):
+        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+    canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+
 def fmt_size(b):
     b = max(0, int(b))
     if b < 1024:
@@ -258,6 +313,11 @@ class AddTaskDialog(ctk.CTkToplevel):
                        fg_color=ACCENT, hover_color="#2563EB", text_color="white",
                        font=ctk.CTkFont(size=10, weight="bold"),
                        command=self._browse_cookies).pack(side="right", padx=(4, 0))
+
+        ctk.CTkButton(cookie_frame, text="Instructions", width=90, height=26,
+                       fg_color=BG_INPUT, hover_color=BORDER, text_color=ACCENT,
+                       font=ctk.CTkFont(size=10),
+                       command=lambda: show_help_image("How to Export Cookies", "instagram_help.png")).pack(side="right", padx=(4, 0))
 
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.pack(fill="x", padx=20, pady=(12, 16))
