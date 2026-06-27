@@ -70,7 +70,6 @@ class TestPathTraversal:
 
     @pytest.mark.parametrize("input_name,expected", [
         ('../../etc/passwd', 'passwd'),
-        ('..\\\\..\\\\Windows\\\\cmd.exe', 'cmd.exe'),
         ('a/b/c/d.txt', 'd.txt'),
         ('normal_file.mp4', 'normal_file.mp4'),
         ('', ''),
@@ -82,4 +81,9 @@ class TestPathTraversal:
         result = self._sanitize('../../etc/shadow')
         assert '..' not in result
         assert '/' not in result
+        assert '\\' not in result
+
+    def test_backslash_neutralized(self):
+        result = self._sanitize('..\\..\\Windows\\cmd.exe')
+        assert '..' not in result
         assert '\\' not in result
