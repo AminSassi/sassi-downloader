@@ -22,7 +22,14 @@ def _has_ffmpeg():
         return False
 
 
-HAS_FFMPEG = _has_ffmpeg()
+HAS_FFMPEG = None
+
+
+def has_ffmpeg():
+    global HAS_FFMPEG
+    if HAS_FFMPEG is None:
+        HAS_FFMPEG = _has_ffmpeg()
+    return HAS_FFMPEG
 
 
 class DownloadEngine:
@@ -147,7 +154,7 @@ class DownloadEngine:
                         'Accept-Language': 'en-US,en;q=0.9',
                     },
                 }
-                if HAS_FFMPEG:
+                if has_ffmpeg():
                     opts['merge_output_format'] = 'mp4'
                 if os.path.exists(COOKIE_FILE):
                     opts['cookiefile'] = COOKIE_FILE
@@ -234,7 +241,7 @@ class DownloadEngine:
                     time.sleep(1)
 
     def _build_format(self, task):
-        if not HAS_FFMPEG:
+        if not has_ffmpeg():
             return "best[ext=mp4]/best"
         if task.quality == "best":
             return "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
