@@ -106,11 +106,14 @@ class DownloadEngine:
                 fmt = self._build_format(task)
                 outtmpl = os.path.join(task.folder, '%(title)s.%(ext)s')
                 if task.rename:
-                    base, ext = os.path.splitext(task.rename)
-                    if ext:
-                        outtmpl = os.path.join(task.folder, task.rename)
-                    else:
-                        outtmpl = os.path.join(task.folder, task.rename + '.%(ext)s')
+                    safe_name = os.path.basename(task.rename)
+                    safe_name = "".join(c for c in safe_name if c.isalnum() or c in " ._-=+()[]")
+                    if safe_name.strip():
+                        base, ext = os.path.splitext(safe_name)
+                        if ext:
+                            outtmpl = os.path.join(task.folder, safe_name)
+                        else:
+                            outtmpl = os.path.join(task.folder, safe_name + '.%(ext)s')
                 opts = {
                     'format': fmt,
                     'outtmpl': outtmpl,
@@ -121,6 +124,8 @@ class DownloadEngine:
                     'extractor_retries': 3,
                     'retries': 3,
                     'fragment_retries': 3,
+                    'restrictfilenames': True,
+                    'windowsfilenames': True,
                     'http_headers': {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
                         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',

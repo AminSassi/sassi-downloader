@@ -347,7 +347,7 @@ class AddTaskDialog(ctk.CTkToplevel):
                 try:
                     with _yt.YoutubeDL(o) as y:
                         y.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
-                except:
+                except Exception:
                     pass
                 try:
                     import subprocess
@@ -356,7 +356,7 @@ class AddTaskDialog(ctk.CTkToplevel):
                          '--skip-download', '-o', 'test', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'],
                         capture_output=True, timeout=30, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                     )
-                except:
+                except Exception:
                     pass
                 if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 50:
                     self.after(0, lambda: self._cookie_status.configure(text="Cookies imported!", text_color=GREEN))
@@ -383,6 +383,9 @@ class AddTaskDialog(ctk.CTkToplevel):
         url = self.url_entry.get().strip()
         if not url:
             messagebox.showwarning("Missing URL", "Please enter a URL")
+            return
+        if not url.startswith(('http://', 'https://', 'ftp://')):
+            messagebox.showwarning("Invalid URL", "URL must start with http://, https://, or ftp://")
             return
 
         quality_id = "best"
@@ -829,6 +832,11 @@ class SassiDownloader:
     def _handle_new_task(self, result):
         url = result["url"]
         save_to = result["save_to"] or self.dl_path
+        if not os.path.isdir(save_to):
+            try:
+                os.makedirs(save_to, exist_ok=True)
+            except Exception:
+                save_to = self.dl_path
         self.dl_path = save_to
         quality = result.get("quality", "best")
         rename = result.get("rename", "")

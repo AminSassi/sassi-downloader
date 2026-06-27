@@ -16,7 +16,7 @@ def main():
         if os.path.exists(icon_path):
             try:
                 root.iconbitmap(icon_path)
-            except:
+            except Exception:
                 pass
             break
 
