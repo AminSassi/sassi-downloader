@@ -63,12 +63,10 @@ class SidebarItem(ctk.CTkFrame):
     def __init__(self, master, icon, text, count=0, active=False, tag_color=None, **kwargs):
         super().__init__(master, fg_color="transparent", height=36, **kwargs)
         self.pack_propagate(False)
-
         self.active = active
         self.text = text
         self.count = count
         self.on_click = None
-
         self.configure(cursor="hand2")
         self.bind("<Button-1>", self._click)
 
@@ -77,7 +75,7 @@ class SidebarItem(ctk.CTkFrame):
 
         if tag_color:
             dot = ctk.CTkLabel(row, text="", width=8, height=8, fg_color=tag_color,
-                               corner_radius=4, text_color="white")
+                               corner_radius=4)
             dot.pack(side="left", padx=(0, 8))
             dot.bind("<Button-1>", self._click)
 
@@ -118,7 +116,7 @@ class AddTaskDialog(ctk.CTkToplevel):
     def __init__(self, parent, dl_path, on_save):
         super().__init__(parent)
         self.title("Task Properties")
-        self.geometry("520x480")
+        self.geometry("520x540")
         self.resizable(False, False)
         self.configure(fg_color=BG_CARD)
         self.transient(parent)
@@ -126,9 +124,11 @@ class AddTaskDialog(ctk.CTkToplevel):
 
         self.on_save = on_save
         self.result = None
+        self.formats = None
+        self.quality_var = None
 
         x = parent.winfo_x() + (parent.winfo_width() - 520) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - 480) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - 540) // 2
         self.geometry(f"+{x}+{y}")
 
         pad = {"padx": 20, "pady": (10, 0)}
@@ -170,8 +170,31 @@ class AddTaskDialog(ctk.CTkToplevel):
                                        text_color=FG, font=ctk.CTkFont(size=12))
         self.url_entry.pack(fill="x", padx=20, pady=(4, 0))
 
+        self.quality_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.quality_frame.pack(fill="x", padx=20, pady=(8, 0))
+        ctk.CTkLabel(self.quality_frame, text="Quality:", font=ctk.CTkFont(size=12, weight="bold"),
+                      text_color=FG, width=70, anchor="w").pack(side="left")
+        self.quality_var = ctk.StringVar(value="Best (auto)")
+        self.quality_menu = ctk.CTkOptionMenu(self.quality_frame, variable=self.quality_var,
+                                               values=["Best (auto)"],
+                                               width=160, height=30,
+                                               fg_color=BG_INPUT, button_color=BORDER,
+                                               text_color=FG, dropdown_fg_color=BG_CARD,
+                                               font=ctk.CTkFont(size=11))
+        self.quality_menu.pack(side="left", padx=(4, 0))
+
+        self.fetch_btn = ctk.CTkButton(self.quality_frame, text="Fetch", width=60, height=30,
+                                        fg_color=ACCENT, hover_color="#2563EB",
+                                        font=ctk.CTkFont(size=11, weight="bold"),
+                                        command=self._fetch_formats)
+        self.fetch_btn.pack(side="left", padx=(6, 0))
+
+        self.quality_status = ctk.CTkLabel(self, text="",
+                                            font=ctk.CTkFont(size=10), text_color=FG_DIM)
+        self.quality_status.pack(anchor="w", padx=28)
+
         save_frame = ctk.CTkFrame(self, fg_color="transparent")
-        save_frame.pack(fill="x", padx=20, pady=(10, 0))
+        save_frame.pack(fill="x", padx=20, pady=(8, 0))
         ctk.CTkLabel(save_frame, text="Save to:", font=ctk.CTkFont(size=12, weight="bold"),
                       text_color=FG, width=70, anchor="w").pack(side="left")
         self.save_entry = ctk.CTkEntry(save_frame, height=30, fg_color=BG_INPUT,
@@ -190,7 +213,8 @@ class AddTaskDialog(ctk.CTkToplevel):
                       text_color=FG, width=70, anchor="w").pack(side="left")
         self.rename_entry = ctk.CTkEntry(rename_frame, height=30, fg_color=BG_INPUT,
                                           border_color=BORDER, text_color=FG,
-                                          font=ctk.CTkFont(size=11))
+                                          font=ctk.CTkFont(size=11),
+                                          placeholder_text="Optional new filename")
         self.rename_entry.pack(side="left", fill="x", expand=True, padx=(4, 0))
 
         tag_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -210,19 +234,15 @@ class AddTaskDialog(ctk.CTkToplevel):
                       text_color=FG).pack(side="left")
         self.splits_var = ctk.StringVar(value="32")
         self.splits_menu = ctk.CTkOptionMenu(tag_frame, variable=self.splits_var,
-                                              values=["4", "8", "16", "32", "64"],
+                                              values=["1", "2", "4", "8", "16", "32", "64"],
                                               width=70, height=30,
                                               fg_color=BG_INPUT, button_color=BORDER,
                                               text_color=FG, dropdown_fg_color=BG_CARD,
                                               font=ctk.CTkFont(size=11))
         self.splits_menu.pack(side="left", padx=(4, 0))
 
-        adv = ctk.CTkLabel(self, text="Advanced Options", font=ctk.CTkFont(size=11),
-                            text_color=ACCENT, cursor="hand2")
-        adv.pack(anchor="w", padx=20, pady=(12, 0))
-
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=20, pady=(20, 20))
+        btn_frame.pack(fill="x", padx=20, pady=(16, 16))
 
         ctk.CTkButton(btn_frame, text="Cancel", width=100, height=34,
                        fg_color=BG_INPUT, hover_color=BORDER, text_color=FG,
@@ -245,6 +265,49 @@ class AddTaskDialog(ctk.CTkToplevel):
             self.tab_url.configure(fg_color=BG_INPUT, text_color=FG_DIM,
                                     font=ctk.CTkFont(size=12))
 
+    def _fetch_formats(self):
+        url = self.url_entry.get().strip()
+        if not url:
+            messagebox.showwarning("Missing URL", "Enter a URL first")
+            return
+        self.fetch_btn.configure(text="...", state="disabled")
+        self.quality_status.configure(text="Fetching formats...", text_color=ACCENT)
+
+        def work():
+            try:
+                o = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+                with yt_dlp.YoutubeDL(o) as y:
+                    info = y.extract_info(url, download=False)
+                fmts = [("Best (auto)", "best")]
+                seen = {"best"}
+                for f in info.get('formats', []):
+                    h = f.get('height')
+                    vc = f.get('vcodec', 'none')
+                    ext = f.get('ext', '')
+                    if vc != 'none' and h and h >= 360:
+                        label = f"{h}p ({ext.upper()})"
+                        if label not in seen:
+                            seen.add(label)
+                            fmts.append((label, f['format_id']))
+                fmts.sort(key=lambda x: int(x[0].split('p')[0]) if x[1] != "best" else 99999, reverse=True)
+                self.formats = fmts
+                self.after(0, self._fetch_ok, len(fmts) - 1)
+            except Exception as e:
+                self.after(0, self._fetch_err, str(e))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _fetch_ok(self, count):
+        self.fetch_btn.configure(text="Fetch", state="normal")
+        labels = [f[0] for f in self.formats]
+        self.quality_menu.configure(values=labels)
+        self.quality_var.set(labels[0])
+        self.quality_status.configure(text=f"{count} quality options found", text_color=GREEN)
+
+    def _fetch_err(self, error):
+        self.fetch_btn.configure(text="Fetch", state="normal")
+        self.quality_status.configure(text=f"Failed: {error[:50]}", text_color=RED)
+
     def _browse(self):
         path = filedialog.askdirectory()
         if path:
@@ -256,19 +319,29 @@ class AddTaskDialog(ctk.CTkToplevel):
         if not url:
             messagebox.showwarning("Missing URL", "Please enter a URL")
             return
+
+        quality_id = "best"
+        quality_label = self.quality_var.get() if self.quality_var else "Best (auto)"
+        if self.formats:
+            for label, fmt_id in self.formats:
+                if label == quality_label:
+                    quality_id = fmt_id
+                    break
+
         self.result = {
             "url": url,
             "save_to": self.save_entry.get().strip(),
             "rename": self.rename_entry.get().strip(),
             "tag": self.tag_var.get(),
             "splits": int(self.splits_var.get()),
+            "quality": quality_id,
         }
         self.on_save(self.result)
         self.destroy()
 
 
 class DownloadRow(ctk.CTkFrame):
-    def __init__(self, master, task, on_pause, on_cancel, on_resume, **kwargs):
+    def __init__(self, master, task, on_pause, on_cancel, **kwargs):
         super().__init__(master, fg_color=BG_CARD, corner_radius=6, height=52, **kwargs)
         self.pack_propagate(False)
         self.task = task
@@ -329,13 +402,13 @@ class DownloadRow(ctk.CTkFrame):
         btn_row = ctk.CTkFrame(ctrl_frame, fg_color="transparent")
         btn_row.pack(expand=True)
 
-        self.pause_btn = ctk.CTkButton(btn_row, text="", width=28, height=28,
+        self.pause_btn = ctk.CTkButton(btn_row, text="\u23f8", width=28, height=28,
                                         fg_color="transparent", hover_color="#F0F0F0",
                                         text_color=FG_DIM, font=ctk.CTkFont(size=14),
                                         command=lambda: on_pause(task))
         self.pause_btn.pack(side="left", padx=(0, 2))
 
-        self.cancel_btn = ctk.CTkButton(btn_row, text="", width=28, height=28,
+        self.cancel_btn = ctk.CTkButton(btn_row, text="\u2715", width=28, height=28,
                                          fg_color="transparent", hover_color="#FEE2E2",
                                          text_color=RED, font=ctk.CTkFont(size=14),
                                          command=lambda: on_cancel(task))
@@ -343,12 +416,13 @@ class DownloadRow(ctk.CTkFrame):
 
         self._on_pause = on_pause
         self._on_cancel = on_cancel
-        self._on_resume = on_resume
         self._update_icons()
 
     def _update_icons(self):
         if self.task.state == State.PAUSED:
             self.pause_btn.configure(text="\u25b6")
+        elif self.task.state in (State.COMPLETED, State.FAILED, State.CANCELLED):
+            self.pause_btn.configure(text="\u23f8")
         else:
             self.pause_btn.configure(text="\u23f8")
 
@@ -364,31 +438,6 @@ class DownloadRow(ctk.CTkFrame):
         self.task = task
         self._update_icons()
 
-        state_colors = {
-            State.DOWNLOADING: ACCENT,
-            State.CONNECTING: ACCENT,
-            State.QUEUED: FG_DIM,
-            State.PAUSED: YELLOW,
-            State.RETRYING: ORANGE,
-            State.COMPLETED: GREEN,
-            State.FAILED: RED,
-            State.CANCELLED: RED,
-        }
-
-        state_texts = {
-            State.DOWNLOADING: "Downloading",
-            State.CONNECTING: "Connecting...",
-            State.QUEUED: "Queued",
-            State.PAUSED: "Paused",
-            State.RETRYING: f"Retry {task.retries}/{task.max_retries}",
-            State.COMPLETED: "Completed",
-            State.FAILED: "Failed",
-            State.CANCELLED: "Cancelled",
-        }
-
-        color = state_colors.get(task.state, FG_DIM)
-        text = state_texts.get(task.state, "Unknown")
-
         if task.title:
             self.title_label.configure(text=task.title[:50])
 
@@ -397,21 +446,14 @@ class DownloadRow(ctk.CTkFrame):
             self.progress_bar.set(pct)
             self.progress_label.configure(text=f"{task.progress:.0f}%")
             self.progress_bar.configure(progress_color=ACCENT)
-            parts = []
-            if task.speed > 0:
-                parts.append(fmt_speed(task.speed))
-            if task.filesize > 0 and task.downloaded > 0:
-                parts.append(fmt_size(task.filesize - task.downloaded) + " left")
-            elif task.filesize > 0:
-                parts.append(fmt_size(task.filesize))
-            self.status_label.configure(text=text, text_color=color)
+            self.status_label.configure(text="Downloading", text_color=ACCENT)
             self.speed_label.configure(text=fmt_speed(task.speed) if task.speed > 0 else "")
             self.size_label.configure(text=fmt_size(task.filesize) if task.filesize > 0 else "")
         elif task.state == State.COMPLETED:
             self.progress_bar.set(1)
             self.progress_bar.configure(progress_color=GREEN)
             self.progress_label.configure(text="100%")
-            self.status_label.configure(text=text, text_color=GREEN)
+            self.status_label.configure(text="Completed", text_color=GREEN)
             self.speed_label.configure(text="")
             actual = 0
             if task.filename and os.path.exists(task.filename):
@@ -421,7 +463,8 @@ class DownloadRow(ctk.CTkFrame):
             self.size_label.configure(text=fmt_size(actual) if actual > 0 else "")
         elif task.state in (State.FAILED, State.CANCELLED):
             self.progress_bar.configure(progress_color=RED)
-            self.status_label.configure(text=task.error[:40] if task.error else text, text_color=RED)
+            self.status_label.configure(text=task.error[:40] if task.error else str(task.state.value).title(),
+                                         text_color=RED)
             self.speed_label.configure(text="")
         elif task.state == State.PAUSED:
             self.status_label.configure(text="Paused", text_color=YELLOW)
@@ -433,12 +476,15 @@ class DownloadRow(ctk.CTkFrame):
             self.status_label.configure(text="Connecting...", text_color=ACCENT)
             self.speed_label.configure(text="")
         else:
-            self.status_label.configure(text=text, text_color=color)
+            self.status_label.configure(text=str(task.state.value).title(), text_color=FG_DIM)
             self.speed_label.configure(text="")
 
         if task.state in (State.COMPLETED, State.FAILED, State.CANCELLED):
             self.pause_btn.configure(state="disabled")
             self.cancel_btn.configure(state="disabled")
+        else:
+            self.pause_btn.configure(state="normal")
+            self.cancel_btn.configure(state="normal")
 
 
 class SassiDownloader:
@@ -464,8 +510,10 @@ class SassiDownloader:
         self.rows = {}
         self.tasks = []
         self.active_filter = "All"
+        self.active_tag_filter = None
         self._search_after = None
         self._build()
+        self._load_history()
 
     def _default_path(self):
         if sys.platform == "win32":
@@ -521,23 +569,22 @@ class SassiDownloader:
             item.on_click = self._filter_changed
             self.sidebar_items[label] = item
 
-        sched_header = ctk.CTkLabel(self.sidebar, text="Schedules",
-                                      font=ctk.CTkFont(size=11, weight="bold"),
-                                      text_color=FG_DIM, anchor="w")
-        sched_header.pack(fill="x", padx=16, pady=(16, 4))
-
-        for icon, label in [("\u23f3", "Waiting"), ("\u2713", "Complete")]:
-            item = SidebarItem(self.sidebar, icon, label)
-            item.pack(fill="x")
-
         tags_header = ctk.CTkLabel(self.sidebar, text="Tags",
                                      font=ctk.CTkFont(size=11, weight="bold"),
                                      text_color=FG_DIM, anchor="w")
         tags_header.pack(fill="x", padx=16, pady=(16, 4))
 
+        self.tag_items = {}
+        all_tag = SidebarItem(self.sidebar, "", "All Tags", active=True)
+        all_tag.pack(fill="x")
+        all_tag.on_click = self._tag_changed
+        self.tag_items["All Tags"] = all_tag
+
         for tag, color in TAG_COLORS.items():
             item = SidebarItem(self.sidebar, "", tag, tag_color=color)
             item.pack(fill="x")
+            item.on_click = self._tag_changed
+            self.tag_items[tag] = item
 
     def _build_content(self, parent):
         header = ctk.CTkFrame(parent, fg_color="transparent")
@@ -612,11 +659,26 @@ class SassiDownloader:
                                                    scrollbar_button_hover_color="#CCCCCC")
         self.scrollable.pack(fill="both", expand=True)
 
-        self.empty_label = ctk.CTkLabel(self.scrollable,
-                                         text="No downloads yet\nClick + to add a new download",
-                                         font=ctk.CTkFont(size=13),
-                                         text_color=FG_DIM)
-        self.empty_label.pack(pady=60)
+        self._show_empty()
+
+    def _show_empty(self):
+        for w in self.scrollable.winfo_children():
+            w.destroy()
+        ctk.CTkLabel(self.scrollable,
+                      text="No downloads yet\nClick + to add a new download",
+                      font=ctk.CTkFont(size=13),
+                      text_color=FG_DIM).pack(pady=60)
+
+    def _load_history(self):
+        for item in self.history.items[:5]:
+            task = DownloadTask(item.get('path', ''), "best", "", Priority.NORMAL)
+            task.title = item.get('title', 'Unknown')
+            task.state = State.COMPLETED
+            task.filesize = item.get('size', 0)
+            task.filename = item.get('path', '')
+            task.progress = 100
+            self.tasks.append(task)
+        self._refresh_view()
 
     def _filter_changed(self, filter_name):
         self.active_filter = filter_name
@@ -625,46 +687,58 @@ class SassiDownloader:
             item.set_active(name == filter_name)
         self._refresh_view()
 
+    def _tag_changed(self, tag_name):
+        if tag_name == "All Tags":
+            self.active_tag_filter = None
+        else:
+            self.active_tag_filter = tag_name
+        for name, item in self.tag_items.items():
+            item.set_active(name == tag_name)
+        self._refresh_view()
+
     def _get_filtered_tasks(self):
-        if self.active_filter == "All":
-            return self.tasks
-        elif self.active_filter == "Running":
-            return [t for t in self.tasks if t.state in (State.DOWNLOADING, State.CONNECTING, State.QUEUED)]
+        tasks = self.tasks
+
+        if self.active_filter == "Running":
+            tasks = [t for t in tasks if t.state in (State.DOWNLOADING, State.CONNECTING, State.QUEUED)]
         elif self.active_filter == "Suspended":
-            return [t for t in self.tasks if t.state in (State.PAUSED, State.RETRYING)]
+            tasks = [t for t in tasks if t.state in (State.PAUSED, State.RETRYING)]
         elif self.active_filter == "Complete":
-            return [t for t in self.tasks if t.state == State.COMPLETED]
+            tasks = [t for t in tasks if t.state == State.COMPLETED]
         elif self.active_filter == "Incomplete":
-            return [t for t in self.tasks if t.state in (State.FAILED, State.CANCELLED)]
-        return self.tasks
+            tasks = [t for t in tasks if t.state in (State.FAILED, State.CANCELLED)]
+
+        if self.active_tag_filter:
+            tasks = [t for t in tasks if getattr(t, 'tag', None) == self.active_tag_filter]
+
+        search = self.search_entry.get().strip().lower() if hasattr(self, "search_entry") and self.search_entry.winfo_exists() else ""
+        if search:
+            tasks = [t for t in tasks if search in (t.title or "").lower() or search in t.url.lower()]
+
+        return tasks
 
     def _refresh_view(self):
-        search = self.search_entry.get().strip().lower() if hasattr(self, "search_entry") else ""
         filtered = self._get_filtered_tasks()
-        if search:
-            filtered = [t for t in filtered if search in (t.title or "").lower() or search in t.url.lower()]
 
-        for row in self.scrollable.winfo_children():
-            row.destroy()
-
+        for w in self.scrollable.winfo_children():
+            w.destroy()
         self.rows.clear()
 
         if not filtered:
-            self.empty_label = ctk.CTkLabel(self.scrollable,
-                                             text="No downloads yet\nClick + to add a new download",
-                                             font=ctk.CTkFont(size=13),
-                                             text_color=FG_DIM)
-            self.empty_label.pack(pady=60)
+            ctk.CTkLabel(self.scrollable,
+                          text="No downloads found",
+                          font=ctk.CTkFont(size=13),
+                          text_color=FG_DIM).pack(pady=60)
         else:
             for i, task in enumerate(filtered):
                 row = DownloadRow(self.scrollable, task,
                                    on_pause=self._toggle_pause,
-                                   on_cancel=self._cancel_task,
-                                   on_resume=self._toggle_pause)
+                                   on_cancel=self._cancel_task)
                 row.pack(fill="x", pady=(0, 2))
                 if i % 2 == 1:
                     row.configure(fg_color=ROW_ALT)
                 self.rows[task.id] = row
+                row.update_task(task)
 
         self.count_label.configure(text=str(len(filtered)))
 
@@ -690,37 +764,15 @@ class SassiDownloader:
         url = result["url"]
         save_to = result["save_to"] or self.dl_path
         self.dl_path = save_to
+        quality = result.get("quality", "best")
+        rename = result.get("rename", "")
+        tag = result.get("tag", "Other")
+        splits = result.get("splits", 32)
 
-        threading.Thread(target=self._analyze_and_add, args=(url, save_to), daemon=True).start()
-
-    def _analyze_and_add(self, url, save_to):
-        try:
-            o = {'quiet': True, 'no_warnings': True, 'skip_download': True}
-            with yt_dlp.YoutubeDL(o) as y:
-                info = y.extract_info(url, download=False)
-
-            fmts = [("Best (auto)", "best")]
-            seen = {"best"}
-            for f in info.get('formats', []):
-                h = f.get('height')
-                ext = f.get('ext', '')
-                vc = f.get('vcodec', 'none')
-                if vc != 'none' and h and h >= 360:
-                    l = f"{h}p ({ext.upper()})"
-                    if l not in seen:
-                        seen.add(l)
-                        fmts.append((l, f['format_id']))
-            fmts.sort(key=lambda x: int(x[0].split('p')[0]) if x[1] != "best" else 99999, reverse=True)
-
-            quality = fmts[0][1] if fmts else "best"
-
-            self.root.after(0, self._start_download, url, quality, save_to, info)
-        except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to fetch info:\n{str(e)[:200]}"))
-
-    def _start_download(self, url, quality, save_to, info):
         task = DownloadTask(url, quality, save_to, Priority.NORMAL)
-        task.title = info.get('title', 'Unknown')
+        task.tag = tag
+        task.rename = rename
+        task.splits = splits
         self.tasks.append(task)
         self.engine.add(task)
         task._on_update = lambda t: self.root.after(0, self._update_task, t)
@@ -760,6 +812,8 @@ class SassiDownloader:
             row.update_task(task)
 
     def _cancel_task(self, task):
+        if task.state in (State.COMPLETED, State.FAILED, State.CANCELLED):
+            return
         task.cancel()
         row = self.rows.get(task.id)
         if row:

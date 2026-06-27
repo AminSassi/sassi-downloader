@@ -99,16 +99,24 @@ class DownloadEngine:
                         self._safe_call(task._on_update, task)
 
                 fmt = self._build_format(task)
+                outtmpl = os.path.join(task.folder, '%(title)s.%(ext)s')
+                if task.rename:
+                    base, ext = os.path.splitext(task.rename)
+                    if ext:
+                        outtmpl = os.path.join(task.folder, task.rename)
+                    else:
+                        outtmpl = os.path.join(task.folder, task.rename + '.%(ext)s')
                 opts = {
                     'format': fmt,
-                    'outtmpl': os.path.join(task.folder, '%(title)s.%(ext)s'),
+                    'outtmpl': outtmpl,
                     'no_playlists': True, 'progress_hooks': [hook],
                     'quiet': True, 'no_warnings': True,
                     'continuedl': True, 'socket_timeout': 20,
                     'merge_output_format': 'mp4', 'http_chunk_size': 1048576,
                 }
+                splits = getattr(task, 'splits', 32)
                 if stream_count > 1:
-                    opts['concurrent_fragment_downloads'] = min(stream_count, 6)
+                    opts['concurrent_fragment_downloads'] = min(stream_count, max(1, splits // 8))
 
                 start_time = time.time()
                 with yt_dlp.YoutubeDL(opts) as ydl:

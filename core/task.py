@@ -26,6 +26,9 @@ class DownloadTask:
         self.retries = 0
         self.max_retries = 8
         self.checksum = ""
+        self.tag = ""
+        self.rename = ""
+        self.splits = 32
         self._cancel = threading.Event()
         self._pause = threading.Event()
         self._pause.set()
