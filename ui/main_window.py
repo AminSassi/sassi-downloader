@@ -92,12 +92,11 @@ class SidebarItem(ctk.CTkFrame):
         self.text_label.pack(side="left", padx=(4, 0), fill="x", expand=True)
         self.text_label.bind("<Button-1>", self._click)
 
-        if count > 0:
-            self.count_label = ctk.CTkLabel(row, text=str(count),
-                                              font=ctk.CTkFont(size=11),
-                                              text_color=FG_DIM, width=24)
-            self.count_label.pack(side="right")
-            self.count_label.bind("<Button-1>", self._click)
+        self.count_label = ctk.CTkLabel(row, text=str(count) if count > 0 else "",
+                                          font=ctk.CTkFont(size=11),
+                                          text_color=FG_DIM, width=24)
+        self.count_label.pack(side="right")
+        self.count_label.bind("<Button-1>", self._click)
 
     def _click(self, event=None):
         if self.on_click:
@@ -112,8 +111,7 @@ class SidebarItem(ctk.CTkFrame):
 
     def set_count(self, count):
         self.count = count
-        if hasattr(self, "count_label"):
-            self.count_label.configure(text=str(count) if count > 0 else "")
+        self.count_label.configure(text=str(count) if count > 0 else "")
 
 
 class AddTaskDialog(ctk.CTkToplevel):
@@ -350,9 +348,9 @@ class DownloadRow(ctk.CTkFrame):
 
     def _update_icons(self):
         if self.task.state == State.PAUSED:
-            self.pause_btn.configure(text="")
+            self.pause_btn.configure(text="\u25b6")
         else:
-            self.pause_btn.configure(text="")
+            self.pause_btn.configure(text="\u23f8")
 
     def _on_enter(self, event=None):
         if not self.selected:
@@ -406,7 +404,7 @@ class DownloadRow(ctk.CTkFrame):
                 parts.append(fmt_size(task.filesize - task.downloaded) + " left")
             elif task.filesize > 0:
                 parts.append(fmt_size(task.filesize))
-            self.status_label.configure(text=text, fg_color=color)
+            self.status_label.configure(text=text, text_color=color)
             self.speed_label.configure(text=fmt_speed(task.speed) if task.speed > 0 else "")
             self.size_label.configure(text=fmt_size(task.filesize) if task.filesize > 0 else "")
         elif task.state == State.COMPLETED:
@@ -466,6 +464,7 @@ class SassiDownloader:
         self.rows = {}
         self.tasks = []
         self.active_filter = "All"
+        self._search_after = None
         self._build()
 
     def _default_path(self):
@@ -510,11 +509,11 @@ class SassiDownloader:
 
         self.sidebar_items = {}
         task_filters = [
-            ("", "All"),
-            ("", "Running"),
-            ("", "Suspended"),
-            ("", "Complete"),
-            ("", "Incomplete"),
+            ("\u2630", "All"),
+            ("\u25b6", "Running"),
+            ("\u23f8", "Suspended"),
+            ("\u2713", "Complete"),
+            ("\u2717", "Incomplete"),
         ]
         for icon, label in task_filters:
             item = SidebarItem(self.sidebar, icon, label, active=(label == "All"))
@@ -527,7 +526,7 @@ class SassiDownloader:
                                       text_color=FG_DIM, anchor="w")
         sched_header.pack(fill="x", padx=16, pady=(16, 4))
 
-        for icon, label in [("", "Waiting"), ("", "Complete")]:
+        for icon, label in [("\u23f3", "Waiting"), ("\u2713", "Complete")]:
             item = SidebarItem(self.sidebar, icon, label)
             item.pack(fill="x")
 
@@ -578,10 +577,10 @@ class SassiDownloader:
         ctk.CTkButton(right_header, text="+", font=ctk.CTkFont(size=16, weight="bold"),
                        text_color=ACCENT, command=self._add_task, **btn_style).pack(side="left", padx=(0, 4))
 
-        ctk.CTkButton(right_header, text="", font=ctk.CTkFont(size=14),
+        ctk.CTkButton(right_header, text="\u2715", font=ctk.CTkFont(size=12),
                        text_color=RED, command=self._delete_selected, **btn_style).pack(side="left", padx=(0, 4))
 
-        ctk.CTkButton(right_header, text="", font=ctk.CTkFont(size=14),
+        ctk.CTkButton(right_header, text="\u21bb", font=ctk.CTkFont(size=14),
                        text_color=FG_DIM, command=self._refresh_view, **btn_style).pack(side="left")
 
         sep = ctk.CTkFrame(parent, fg_color=BORDER, height=1)
@@ -681,10 +680,12 @@ class SassiDownloader:
             item.set_count(counts.get(name, 0))
 
     def _on_search(self, event=None):
-        self._refresh_view()
+        if self._search_after:
+            self.root.after_cancel(self._search_after)
+        self._search_after = self.root.after(150, self._refresh_view)
 
     def _add_task(self):
-        dialog = AddTaskDialog(self.root, self.dl_path, self._handle_new_task)
+        self._dialog = AddTaskDialog(self.root, self.dl_path, self._handle_new_task)
 
     def _handle_new_task(self, result):
         url = result["url"]
