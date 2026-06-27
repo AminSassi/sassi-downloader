@@ -14,13 +14,15 @@ def _appdata_dir():
 
 
 PLATFORMS = {
-    "instagram": {"file": "instagram.txt", "required": ["sessionid"], "label": "Instagram"},
-    "youtube": {"file": "youtube.txt", "required": ["SID", "__Secure-1PSID"], "label": "YouTube"},
-    "tiktok": {"file": "tiktok.txt", "required": ["sessionid", "ttwid"], "label": "TikTok"},
-    "facebook": {"file": "facebook.txt", "required": ["xs", "c_user"], "label": "Facebook"},
-    "twitter": {"file": "twitter.txt", "required": ["auth_token", "ct0"], "label": "X (Twitter)"},
-    "reddit": {"file": "reddit.txt", "required": ["loid"], "label": "Reddit"},
+    "instagram": {"file": "instagram.txt", "domains": ["instagram.com"], "required": ["sessionid"], "label": "Instagram"},
+    "youtube": {"file": "youtube.txt", "domains": ["youtube.com", "google.com"], "required": ["SID"], "label": "YouTube"},
+    "tiktok": {"file": "tiktok.txt", "domains": ["tiktok.com"], "required": ["sessionid", "ttwid"], "label": "TikTok"},
+    "facebook": {"file": "facebook.txt", "domains": ["facebook.com", "fb.com"], "required": ["xs", "c_user"], "label": "Facebook"},
+    "twitter": {"file": "twitter.txt", "domains": ["x.com", "twitter.com", "t.co"], "required": ["auth_token", "ct0"], "label": "X (Twitter)"},
+    "reddit": {"file": "reddit.txt", "domains": ["reddit.com"], "required": ["loid"], "label": "Reddit"},
 }
+
+NETSCAPE_HEADER = "# Netscape HTTP Cookie File\n# https://curl.haxx.se/rfc/cookie_spec.html\n\n"
 
 
 class CookieManager:
@@ -57,44 +59,47 @@ class CookieManager:
         if "Netscape" not in content and "# HttpOnly" not in content and "version" not in content.lower():
             return False, "Not a valid Netscape cookies file"
 
-        domains_found = self._extract_domains(content)
+        all_lines = content.splitlines()
+        header_lines = [l for l in all_lines if l.startswith("#") or not l.strip()]
+        data_lines = [l for l in all_lines if l.strip() and not l.startswith("#")]
+
         imported = []
         for site, info in PLATFORMS.items():
-            if any(d.endswith(site) or site in d for d in domains_found):
-                required = info["required"]
-                has_required = self._check_required(content, required)
-                dest = self._path(site)
-                shutil.copy2(source_path, dest)
-                status = "complete" if has_required else "partial"
-                imported.append((info["label"], status))
+            site_domains = info["domains"]
+            matching = []
+            for line in data_lines:
+                parts = line.split("\t")
+                if len(parts) >= 3:
+                    domain = parts[0].lstrip(".").lower()
+                    if any(domain == d or domain.endswith("." + d) for d in site_domains):
+                        matching.append(line)
+
+            if not matching:
+                continue
+
+            required = info["required"]
+            has_required = self._check_required(matching, required)
+            status = "complete" if has_required else "partial"
+
+            dest = self._path(site)
+            with open(dest, "w", encoding="utf-8") as f:
+                f.write(NETSCAPE_HEADER)
+                for line in matching:
+                    f.write(line + "\n")
+
+            imported.append((info["label"], status))
 
         if not imported:
             return False, "No supported platform cookies found in file"
 
         return True, imported
 
-    def _extract_domains(self, content):
-        domains = set()
-        for line in content.splitlines():
-            line = line.strip()
-            if line.startswith("#") or not line:
-                continue
+    def _check_required(self, lines, required):
+        for line in lines:
             parts = line.split("\t")
-            if len(parts) >= 3:
-                domains.add(parts[0].lstrip(".").lower())
-        return domains
-
-    def _check_required(self, content, required):
-        found = 0
-        for line in content.splitlines():
-            if line.startswith("#") or not line:
-                continue
-            parts = line.split("\t")
-            if len(parts) >= 6:
-                cookie_name = parts[5]
-                if cookie_name in required:
-                    found += 1
-        return found >= 1
+            if len(parts) >= 6 and parts[5] in required:
+                return True
+        return False
 
     def get_status(self):
         result = []
@@ -105,10 +110,7 @@ class CookieManager:
 
     def get_best_cookie_file(self, url=""):
         url_lower = url.lower()
-        for site in PLATFORMS:
-            if site in url_lower and self.has(site):
-                return self.get_path(site)
-        for site in PLATFORMS:
-            if self.has(site):
+        for site, info in PLATFORMS.items():
+            if any(d in url_lower for d in info["domains"]) and self.has(site):
                 return self.get_path(site)
         return None
