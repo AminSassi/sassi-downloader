@@ -63,7 +63,7 @@ class TestTaskLifecycle:
 
 class TestFormatHelpers:
     def test_fmt_size(self):
-        from ui.main_window import fmt_size
+        from core.utils import fmt_size
         assert fmt_size(0) == '0 B'
         assert fmt_size(-100) == '0 B'
         assert fmt_size(1023) == '1023 B'
@@ -72,7 +72,7 @@ class TestFormatHelpers:
         assert fmt_size(1099511627776) == '1.00 TB'
 
     def test_fmt_speed(self):
-        from ui.main_window import fmt_speed
+        from core.utils import fmt_speed
         assert fmt_speed(0) == '0 B/s'
         assert fmt_speed(-50) == '0 B/s'
         assert fmt_speed(1024) == '1 KB/s'
