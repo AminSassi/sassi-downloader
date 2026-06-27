@@ -51,49 +51,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          python -m pytest tests/ -v --cov=core --cov=ui --cov=main --cov-report=term-missing --cov-report=html
-
-      - name: Upload coverage
-        if: matrix.python-version == '3.12'
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: htmlcov/
-
-  build:
-    runs-on: windows-latest
-    needs: test
-    if: github.ref == 'refs/heads/main'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: Get commit hash
-        id: vars
-        shell: bash
-        run: echo "commit=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
-      - name: Build executable
-        run: |
-          pyinstaller --onefile --noconsole --name "Sassi Downloader" --icon=icon.ico --collect-data customtkinter --hidden-import customtkinter --hidden-import yt_dlp main.py
-
-      - name: Generate checksum
-        shell: bash
-        run: |
-          certutil -hashfile "dist/Sassi Downloader.exe" SHA256 > checksum.txt
-          echo "Commit: ${{ steps.vars.outputs.commit }}" >> checksum.txt
-          echo "Python: 3.12" >> checksum.txt
+          python -m pytest tests/ -v --cov=core --cov-report=term-missing
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
