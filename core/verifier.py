@@ -26,16 +26,16 @@ class ChunkVerifier:
                 return True, "ok"
             if total > 0 and c["expected_size"] > 0 and total != c["expected_size"]:
                 c["size_decreases"] += 1
-                if c["size_decreases"] >= 3:
+                if c["size_decreases"] >= 5:
                     return False, "server_returned_different_file"
             if downloaded < c["last_downloaded"] and c["last_downloaded"] > 0:
                 c["size_decreases"] += 1
-                if c["size_decreases"] >= 3:
+                if c["size_decreases"] >= 5:
                     return False, "byte_count_decreased"
             elapsed = time.time() - c["start_time"]
             if downloaded == c["last_downloaded"] and downloaded > 0:
                 c["stall_count"] += 1
-                stall_limit = 60 if elapsed < 10 else 45 if elapsed < 60 else 30
+                stall_limit = 120 if elapsed < 10 else 90 if elapsed < 60 else 60
                 if c["stall_count"] >= stall_limit:
                     return False, "download_stalled"
             else:

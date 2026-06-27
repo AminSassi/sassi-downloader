@@ -94,6 +94,9 @@ class DownloadEngine:
                 return
             try:
                 task.state = State.CONNECTING
+                task.progress = 0
+                task.speed = 0
+                task.eta = ""
                 self._safe_call(task._on_update, task)
                 stream_count = self.concurrency.get_streams(task.host)
                 self.chunk_verifier.start_tracking(task.id, task.filesize)
