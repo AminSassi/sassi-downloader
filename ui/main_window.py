@@ -254,23 +254,10 @@ class AddTaskDialog(ctk.CTkToplevel):
         self._cookie_status = ctk.CTkLabel(cookie_frame, text="", font=ctk.CTkFont(size=10), text_color=FG_DIM)
         self._cookie_status.pack(side="left")
 
-        detected_browsers = self._detect_browsers()
-        if detected_browsers:
-            primary = detected_browsers[0]
-            ctk.CTkButton(cookie_frame, text=f"Use {primary} Login", width=140, height=26,
-                           fg_color=GREEN, hover_color="#16A34A", text_color="white",
-                           font=ctk.CTkFont(size=10, weight="bold"),
-                           command=lambda: self._import_cookies_from(primary.lower())).pack(side="right", padx=(4, 0))
-            if len(detected_browsers) > 1:
-                others = [b for b in detected_browsers if b != primary]
-                ctk.CTkButton(cookie_frame, text=f"Or {others[0]}", width=80, height=26,
-                               fg_color=BG_INPUT, hover_color=BORDER, text_color=ACCENT,
-                               font=ctk.CTkFont(size=10),
-                               command=lambda: self._import_cookies_from(others[0].lower())).pack(side="right", padx=(4, 0))
-        else:
-            ctk.CTkButton(cookie_frame, text="Import Cookies", width=120, height=26,
-                           fg_color=BG_INPUT, hover_color=BORDER, text_color=ACCENT,
-                           font=ctk.CTkFont(size=10), command=self._browse_cookies).pack(side="right")
+        ctk.CTkButton(cookie_frame, text="Browse Cookies File", width=140, height=26,
+                       fg_color=ACCENT, hover_color="#2563EB", text_color="white",
+                       font=ctk.CTkFont(size=10, weight="bold"),
+                       command=self._browse_cookies).pack(side="right", padx=(4, 0))
 
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.pack(fill="x", padx=20, pady=(12, 16))
@@ -386,118 +373,13 @@ class AddTaskDialog(ctk.CTkToplevel):
     def _browse_cookies(self):
         from core.engine import COOKIE_FILE
         path = filedialog.askopenfilename(
-            title="Select Cookies File",
+            title="Select Cookies File (export from browser extension)",
             filetypes=[("Netscape Cookie File", "*.txt"), ("All Files", "*.*")]
         )
         if path:
             import shutil
             shutil.copy2(path, COOKIE_FILE)
             self._cookie_status.configure(text="Cookies loaded!", text_color=GREEN)
-
-    @staticmethod
-    def _detect_browsers():
-        browsers = []
-        if sys.platform == "win32":
-            import winreg
-            for name, reg_key in [("Chrome", r"Software\Google\Chrome\BLBeacon"),
-                                   ("Edge", r"Software\Microsoft\Edge\BLBeacon"),
-                                   ("Firefox", r"Software\Mozilla\Mozilla Firefox")]:
-                try:
-                    k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_key)
-                    winreg.CloseKey(k)
-                    browsers.append(name)
-                except OSError:
-                    pass
-        elif sys.platform == "darwin":
-            import pathlib
-            home = pathlib.Path.home()
-            for name, rel in [("Chrome", "Library/Application Support/Google/Chrome"),
-                               ("Edge", "Library/Application Support/Microsoft Edge"),
-                               ("Firefox", "Library/Application Support/Firefox")]:
-                if (home / rel).exists():
-                    browsers.append(name)
-        else:
-            import pathlib
-            home = pathlib.Path.home()
-            for name, rel in [("Chrome", ".config/google-chrome"),
-                               ("Edge", ".config/microsoft-edge"),
-                               ("Firefox", ".mozilla/firefox")]:
-                if (home / rel).exists():
-                    browsers.append(name)
-        return browsers
-
-    def _import_cookies_from(self, browser):
-        import threading as _threading
-        from core.engine import COOKIE_FILE
-
-        def work():
-            try:
-                self.after(0, lambda: self._cookie_status.configure(
-                    text=f"Importing from {browser.title()}...", text_color=ACCENT))
-
-                cookie_db = self._find_cookie_db(browser)
-                if cookie_db and os.path.exists(cookie_db):
-                    import shutil, tempfile
-                    tmp_db = os.path.join(tempfile.gettempdir(), f"sassi_{browser}_cookies.db")
-                    try:
-                        shutil.copy2(cookie_db, tmp_db)
-                    except PermissionError:
-                        self.after(0, lambda: self._cookie_status.configure(
-                            text=f"{browser.title()} is locked. Close it and try again.", text_color=ORANGE))
-                        return
-
-                    import yt_dlp as _yt
-                    o = {
-                        'quiet': True, 'no_warnings': True, 'skip_download': True,
-                        'cookiesfrombrowser': (browser, None, tmp_db),
-                    }
-                    try:
-                        with _yt.YoutubeDL(o) as y:
-                            y.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
-                    except Exception:
-                        pass
-
-                    try:
-                        os.remove(tmp_db)
-                    except Exception:
-                        pass
-
-                    if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 50:
-                        self.after(0, lambda: self._cookie_status.configure(
-                            text=f"{browser.title()} login imported!", text_color=GREEN))
-                    else:
-                        self.after(0, lambda: self._cookie_status.configure(
-                            text=f"{browser.title()} not logged in. Log in first.", text_color=ORANGE))
-                else:
-                    self.after(0, lambda: self._cookie_status.configure(
-                        text=f"{browser.title()} not found.", text_color=ORANGE))
-            except Exception as err:
-                self.after(0, lambda: self._cookie_status.configure(
-                    text=f"Failed: {str(err)[:50]}", text_color=RED))
-
-        _threading.Thread(target=work, daemon=True).start()
-
-    @staticmethod
-    def _find_cookie_db(browser):
-        if sys.platform == "win32":
-            local = os.environ.get("LOCALAPPDATA", "")
-            paths = {
-                "chrome": os.path.join(local, "Google", "Chrome", "User Data", "Default", "Network", "Cookies"),
-                "edge": os.path.join(local, "Microsoft", "Edge", "User Data", "Default", "Network", "Cookies"),
-            }
-        elif sys.platform == "darwin":
-            home = os.path.expanduser("~")
-            paths = {
-                "chrome": os.path.join(home, "Library", "Application Support", "Google", "Chrome", "Default", "Network", "Cookies"),
-                "edge": os.path.join(home, "Library", "Application Support", "Microsoft Edge", "Default", "Network", "Cookies"),
-            }
-        else:
-            home = os.path.expanduser("~")
-            paths = {
-                "chrome": os.path.join(home, ".config", "google-chrome", "Default", "Network", "Cookies"),
-                "edge": os.path.join(home, ".config", "microsoft-edge", "Default", "Network", "Cookies"),
-            }
-        return paths.get(browser.lower())
 
     def _save(self):
         url = self.url_entry.get().strip()

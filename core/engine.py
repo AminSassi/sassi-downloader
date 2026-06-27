@@ -190,10 +190,6 @@ class DownloadEngine:
                     opts['merge_output_format'] = 'mp4'
                 if os.path.exists(COOKIE_FILE):
                     opts['cookiefile'] = COOKIE_FILE
-                else:
-                    detected = _detect_browsers()
-                    if detected:
-                        opts['cookiesfrombrowser'] = (detected[0].lower(),)
                 splits = getattr(task, 'splits', 32)
                 if stream_count > 1:
                     opts['concurrent_fragment_downloads'] = min(stream_count, max(1, splits // 8))
