@@ -1,13 +1,13 @@
 import customtkinter as ctk
-from tkinter import filedialog, messagebox  # noqa: F401
+from tkinter import filedialog, messagebox
+import threading
 import os
 import sys
-import yt_dlp  # noqa: F401
+import yt_dlp
 from core.enums import State, Priority
 from core.engine import DownloadEngine
 from core.task import DownloadTask
 from core.history import AtomicHistory
-from core.utils import fmt_size, fmt_speed
 
 HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".sassi_history.json")
 AUDIT_LOG = os.path.join(os.path.expanduser("~"), ".sassi_audit.log")
@@ -36,6 +36,383 @@ TAG_COLORS = {
     "Picture": "#F59E0B",
     "Other": "#8B5CF6",
 }
+
+
+def fmt_size(b):
+    b = max(0, int(b))
+    if b < 1024:
+        return f"{b} B"
+    elif b < 1048576:
+        return f"{b / 1024:.0f} KB"
+    elif b < 1073741824:
+        return f"{b / 1048576:.1f} MB"
+    elif b < 1099511627776:
+        return f"{b / 1073741824:.2f} GB"
+    else:
+        return f"{b / 1099511627776:.2f} TB"
+
+
+def fmt_speed(b):
+    b = max(0, b)
+    if b < 1024:
+        return f"{b:.0f} B/s"
+    elif b < 1048576:
+        return f"{b / 1024:.0f} KB/s"
+    elif b < 1073741824:
+        return f"{b / 1048576:.1f} MB/s"
+    elif b < 1099511627776:
+        return f"{b / 1073741824:.2f} GB/s"
+    else:
+        return f"{b / 1099511627776:.2f} TB/s"
+
+
+class SidebarItem(ctk.CTkFrame):
+    def __init__(self, master, icon, text, count=0, active=False, tag_color=None, **kwargs):
+        super().__init__(master, fg_color="transparent", height=36, **kwargs)
+        self.pack_propagate(False)
+        self.active = active
+        self.text = text
+        self.count = count
+        self.on_click = None
+        self.configure(cursor="hand2")
+        self.bind("<Button-1>", self._click)
+
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="x", padx=12, pady=2)
+
+        if tag_color:
+            dot = ctk.CTkLabel(row, text="", width=8, height=8, fg_color=tag_color,
+                               corner_radius=4)
+            dot.pack(side="left", padx=(0, 8))
+            dot.bind("<Button-1>", self._click)
+
+        self.icon_label = ctk.CTkLabel(row, text=icon, font=ctk.CTkFont(size=14),
+                                        width=20, text_color=ACCENT if active else FG_DIM, anchor="w")
+        self.icon_label.pack(side="left")
+        self.icon_label.bind("<Button-1>", self._click)
+
+        self.text_label = ctk.CTkLabel(row, text=text,
+                                        font=ctk.CTkFont(size=13, weight="bold" if active else "normal"),
+                                        text_color=ACCENT if active else FG, anchor="w")
+        self.text_label.pack(side="left", padx=(4, 0), fill="x", expand=True)
+        self.text_label.bind("<Button-1>", self._click)
+
+        self.count_label = ctk.CTkLabel(row, text=str(count) if count > 0 else "",
+                                          font=ctk.CTkFont(size=11),
+                                          text_color=FG_DIM, width=24)
+        self.count_label.pack(side="right")
+        self.count_label.bind("<Button-1>", self._click)
+
+    def _click(self, event=None):
+        if self.on_click:
+            self.on_click(self.text)
+
+    def set_active(self, active):
+        self.active = active
+        color = ACCENT if active else FG_DIM
+        self.icon_label.configure(text_color=color)
+        self.text_label.configure(text_color=ACCENT if active else FG,
+                                   font=ctk.CTkFont(size=13, weight="bold" if active else "normal"))
+
+    def set_count(self, count):
+        self.count = count
+        self.count_label.configure(text=str(count) if count > 0 else "")
+
+
+class AddTaskDialog(ctk.CTkToplevel):
+    def __init__(self, parent, dl_path, on_save):
+        super().__init__(parent)
+        self.title("Task Properties")
+        self.geometry("520x540")
+        self.resizable(False, False)
+        self.configure(fg_color=BG_CARD)
+        self.transient(parent)
+        self.grab_set()
+
+        self.on_save = on_save
+        self.result = None
+        self.formats = None
+        self.quality_var = None
+
+        x = parent.winfo_x() + (parent.winfo_width() - 520) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - 540) // 2
+        self.geometry(f"+{x}+{y}")
+
+        pad = {"padx": 20, "pady": (10, 0)}
+
+        title_bar = ctk.CTkFrame(self, fg_color=BG_CARD, height=40)
+        title_bar.pack(fill="x", padx=20, pady=(15, 0))
+
+        dot_frame = ctk.CTkFrame(title_bar, fg_color="transparent")
+        dot_frame.pack(side="left")
+        for color in ["#FF5F56", "#FFBD2E", "#27C93F"]:
+            ctk.CTkLabel(dot_frame, text="", width=12, height=12,
+                         fg_color=color, corner_radius=6).pack(side="left", padx=(0, 6))
+
+        ctk.CTkLabel(title_bar, text="Task Properties",
+                      font=ctk.CTkFont(size=14, weight="bold"),
+                      text_color=FG).pack(side="left", padx=(10, 0))
+
+        tab_frame = ctk.CTkFrame(self, fg_color="transparent")
+        tab_frame.pack(fill="x", **pad)
+
+        self.tab_var = ctk.StringVar(value="URL")
+        self.tab_url = ctk.CTkButton(tab_frame, text="URL", width=120, height=32,
+                                      fg_color=ACCENT, hover_color=ACCENT,
+                                      font=ctk.CTkFont(size=12, weight="bold"),
+                                      command=lambda: self._select_tab("URL"))
+        self.tab_url.pack(side="left", padx=(0, 4))
+        self.tab_torrent = ctk.CTkButton(tab_frame, text="Torrent", width=120, height=32,
+                                          fg_color=BG_INPUT, hover_color=BORDER,
+                                          text_color=FG_DIM,
+                                          font=ctk.CTkFont(size=12),
+                                          command=lambda: self._select_tab("Torrent"))
+        self.tab_torrent.pack(side="left")
+
+        ctk.CTkLabel(self, text="URL", font=ctk.CTkFont(size=12, weight="bold"),
+                      text_color=FG, anchor="w").pack(fill="x", **pad)
+
+        self.url_entry = ctk.CTkEntry(self, height=36, placeholder_text="Type your url(s) here",
+                                       fg_color=BG_INPUT, border_color=BORDER,
+                                       text_color=FG, font=ctk.CTkFont(size=12))
+        self.url_entry.pack(fill="x", padx=20, pady=(4, 0))
+
+        self.quality_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.quality_frame.pack(fill="x", padx=20, pady=(8, 0))
+        ctk.CTkLabel(self.quality_frame, text="Quality:", font=ctk.CTkFont(size=12, weight="bold"),
+                      text_color=FG, width=70, anchor="w").pack(side="left")
+        self.quality_var = ctk.StringVar(value="Best (auto)")
+        self.quality_menu = ctk.CTkOptionMenu(self.quality_frame, variable=self.quality_var,
+                                               values=["Best (auto)"],
+                                               width=160, height=30,
+                                               fg_color=BG_INPUT, button_color=BORDER,
+                                               text_color=FG, dropdown_fg_color=BG_CARD,
+                                               font=ctk.CTkFont(size=11))
+        self.quality_menu.pack(side="left", padx=(4, 0))
+
+        self.fetch_btn = ctk.CTkButton(self.quality_frame, text="Fetch", width=60, height=30,
+                                        fg_color=ACCENT, hover_color="#2563EB",
+                                        font=ctk.CTkFont(size=11, weight="bold"),
+                                        command=self._fetch_formats)
+        self.fetch_btn.pack(side="left", padx=(6, 0))
+
+        self.quality_status = ctk.CTkLabel(self, text="",
+                                            font=ctk.CTkFont(size=10), text_color=FG_DIM)
+        self.quality_status.pack(anchor="w", padx=28)
+
+        save_frame = ctk.CTkFrame(self, fg_color="transparent")
+        save_frame.pack(fill="x", padx=20, pady=(8, 0))
+        ctk.CTkLabel(save_frame, text="Save to:", font=ctk.CTkFont(size=12, weight="bold"),
+                      text_color=FG, width=70, anchor="w").pack(side="left")
+        self.save_entry = ctk.CTkEntry(save_frame, height=30, fg_color=BG_INPUT,
+                                        border_color=BORDER, text_color=FG,
+                                        font=ctk.CTkFont(size=11))
+        self.save_entry.pack(side="left", fill="x", expand=True, padx=(4, 4))
+        self.save_entry.insert(0, dl_path)
+        browse_btn = ctk.CTkButton(save_frame, text="...", width=30, height=30,
+                                    fg_color=BG_INPUT, hover_color=BORDER,
+                                    text_color=FG, command=self._browse)
+        browse_btn.pack(side="right")
+
+        rename_frame = ctk.CTkFrame(self, fg_color="transparent")
+        rename_frame.pack(fill="x", padx=20, pady=(8, 0))
+        ctk.CTkLabel(rename_frame, text="Rename:", font=ctk.CTkFont(size=12, weight="bold"),
+                      text_color=FG, width=70, anchor="w").pack(side="left")
+        self.rename_entry = ctk.CTkEntry(rename_frame, height=30, fg_color=BG_INPUT,
+                                          border_color=BORDER, text_color=FG,
+                                          font=ctk.CTkFont(size=11),
+                                          placeholder_text="Optional new filename")
+        self.rename_entry.pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+        tag_frame = ctk.CTkFrame(self, fg_color="transparent")
+        tag_frame.pack(fill="x", padx=20, pady=(8, 0))
+        ctk.CTkLabel(tag_frame, text="Tags:", font=ctk.CTkFont(size=12, weight="bold"),
+                      text_color=FG, width=70, anchor="w").pack(side="left")
+        self.tag_var = ctk.StringVar(value="Movie")
+        self.tag_menu = ctk.CTkOptionMenu(tag_frame, variable=self.tag_var,
+                                           values=list(TAG_COLORS.keys()),
+                                           width=120, height=30,
+                                           fg_color=BG_INPUT, button_color=BORDER,
+                                           text_color=FG, dropdown_fg_color=BG_CARD,
+                                           font=ctk.CTkFont(size=11))
+        self.tag_menu.pack(side="left", padx=(4, 10))
+
+        ctk.CTkLabel(tag_frame, text="Splits:", font=ctk.CTkFont(size=12, weight="bold"),
+                      text_color=FG).pack(side="left")
+        self.splits_var = ctk.StringVar(value="32")
+        self.splits_menu = ctk.CTkOptionMenu(tag_frame, variable=self.splits_var,
+                                              values=["1", "2", "4", "8", "16", "32", "64"],
+                                              width=70, height=30,
+                                              fg_color=BG_INPUT, button_color=BORDER,
+                                              text_color=FG, dropdown_fg_color=BG_CARD,
+                                              font=ctk.CTkFont(size=11))
+        self.splits_menu.pack(side="left", padx=(4, 0))
+
+        cookie_frame = ctk.CTkFrame(self, fg_color="transparent")
+        cookie_frame.pack(fill="x", padx=20, pady=(10, 0))
+
+        self._cookie_status = ctk.CTkLabel(cookie_frame, text="", font=ctk.CTkFont(size=10), text_color=FG_DIM)
+        self._cookie_status.pack(side="left")
+
+        ctk.CTkButton(cookie_frame, text="Import from Browser", width=140, height=26,
+                       fg_color=BG_INPUT, hover_color=BORDER, text_color=ACCENT,
+                       font=ctk.CTkFont(size=10), command=self._import_cookies).pack(side="right", padx=(4, 0))
+
+        ctk.CTkButton(cookie_frame, text="Browse Cookies File", width=120, height=26,
+                       fg_color=BG_INPUT, hover_color=BORDER, text_color=ACCENT,
+                       font=ctk.CTkFont(size=10), command=self._browse_cookies).pack(side="right")
+
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=(12, 16))
+
+        ctk.CTkButton(btn_frame, text="Cancel", width=100, height=34,
+                       fg_color=BG_INPUT, hover_color=BORDER, text_color=FG,
+                       font=ctk.CTkFont(size=12), command=self.destroy).pack(side="right", padx=(4, 0))
+        ctk.CTkButton(btn_frame, text="Save", width=100, height=34,
+                       fg_color=ACCENT, hover_color="#2563EB",
+                       font=ctk.CTkFont(size=12, weight="bold"),
+                       command=self._save).pack(side="right")
+
+    def _select_tab(self, tab):
+        self.tab_var.set(tab)
+        if tab == "URL":
+            self.tab_url.configure(fg_color=ACCENT, text_color="white",
+                                    font=ctk.CTkFont(size=12, weight="bold"))
+            self.tab_torrent.configure(fg_color=BG_INPUT, text_color=FG_DIM,
+                                        font=ctk.CTkFont(size=12))
+        else:
+            self.tab_torrent.configure(fg_color=ACCENT, text_color="white",
+                                        font=ctk.CTkFont(size=12, weight="bold"))
+            self.tab_url.configure(fg_color=BG_INPUT, text_color=FG_DIM,
+                                    font=ctk.CTkFont(size=12))
+
+    def _fetch_formats(self):
+        url = self.url_entry.get().strip()
+        if not url:
+            messagebox.showwarning("Missing URL", "Enter a URL first")
+            return
+        self.fetch_btn.configure(text="...", state="disabled")
+        self.quality_status.configure(text="Fetching formats...", text_color=ACCENT)
+
+        def work():
+            try:
+                o = {'quiet': True, 'no_warnings': True, 'skip_download': True}
+                with yt_dlp.YoutubeDL(o) as y:
+                    info = y.extract_info(url, download=False)
+                fmts = [("Best (auto)", "best")]
+                seen_heights = set()
+                for f in info.get('formats', []):
+                    h = f.get('height')
+                    vc = f.get('vcodec', 'none')
+                    ext = f.get('ext', '')
+                    fps = f.get('fps', 0) or 0
+                    note = f.get('format_note', '')
+                    if vc != 'none' and h and h >= 240:
+                        fps_str = f" {fps}fps" if fps > 30 else ""
+                        note_str = f" ({note})" if note and note.lower() not in ('default', 'medium', 'low', 'high') else ""
+                        label = f"{h}p{fps_str} ({ext.upper()}){note_str}"
+                        if h not in seen_heights:
+                            seen_heights.add(h)
+                            fmts.append((label, f['format_id']))
+                fmts.sort(key=lambda x: int(float(x[0].split('p')[0])) if x[1] != "best" else 99999, reverse=True)
+                self.formats = fmts
+                self.after(0, self._fetch_ok, len(fmts) - 1)
+            except Exception as e:
+                self.after(0, self._fetch_err, str(e))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _fetch_ok(self, count):
+        self.fetch_btn.configure(text="Fetch", state="normal")
+        labels = [f[0] for f in self.formats]
+        self.quality_menu.configure(values=labels)
+        self.quality_var.set(labels[0])
+        self.quality_status.configure(text=f"{count} quality options found", text_color=GREEN)
+
+    def _fetch_err(self, error):
+        self.fetch_btn.configure(text="Fetch", state="normal")
+        self.quality_status.configure(text=f"Failed: {error[:50]}", text_color=RED)
+
+    def _browse(self):
+        path = filedialog.askdirectory()
+        if path:
+            self.save_entry.delete(0, "end")
+            self.save_entry.insert(0, path)
+
+    def _import_cookies(self):
+        import threading as _threading
+        from core.engine import COOKIE_FILE
+
+        def work():
+            try:
+                self.after(0, lambda: self._cookie_status.configure(text="Importing from Chrome...", text_color=ACCENT))
+                import yt_dlp as _yt
+                o = {'quiet': True, 'no_warnings': True, 'skip_download': True, 'cookiefile': COOKIE_FILE}
+                try:
+                    with _yt.YoutubeDL(o) as y:
+                        y.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
+                except Exception:
+                    pass
+                try:
+                    import subprocess
+                    subprocess.run(
+                        ['yt-dlp', '--cookies-from-browser', 'chrome', '--cookies', COOKIE_FILE,
+                         '--skip-download', '-o', 'test', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'],
+                        capture_output=True, timeout=30, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+                    )
+                except Exception:
+                    pass
+                if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 50:
+                    self.after(0, lambda: self._cookie_status.configure(text="Cookies imported!", text_color=GREEN))
+                else:
+                    self.after(0, lambda: self._cookie_status.configure(
+                        text="Chrome not found. Try Edge/Firefox or export cookies manually.", text_color=ORANGE))
+            except Exception as err:
+                err_msg = str(err)[:40]
+                self.after(0, lambda m=err_msg: self._cookie_status.configure(text=f"Error: {m}", text_color=RED))
+
+        _threading.Thread(target=work, daemon=True).start()
+
+    def _browse_cookies(self):
+        from core.engine import COOKIE_FILE
+        path = filedialog.askopenfilename(
+            title="Select Cookies File",
+            filetypes=[("Netscape Cookie File", "*.txt"), ("All Files", "*.*")]
+        )
+        if path:
+            import shutil
+            shutil.copy2(path, COOKIE_FILE)
+            self._cookie_status.configure(text="Cookies loaded!", text_color=GREEN)
+
+    def _save(self):
+        url = self.url_entry.get().strip()
+        if not url:
+            messagebox.showwarning("Missing URL", "Please enter a URL")
+            return
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if parsed.scheme not in ('http', 'https', 'ftp') or not parsed.netloc:
+            messagebox.showwarning("Invalid URL", "Please enter a valid URL with a domain (e.g. https://youtube.com/watch?v=...)")
+            return
+
+        quality_id = "best"
+        quality_label = self.quality_var.get() if self.quality_var else "Best (auto)"
+        if self.formats:
+            for label, fmt_id in self.formats:
+                if label == quality_label:
+                    quality_id = fmt_id
+                    break
+
+        self.result = {
+            "url": url,
+            "save_to": self.save_entry.get().strip(),
+            "rename": self.rename_entry.get().strip(),
+            "tag": self.tag_var.get(),
+            "splits": int(self.splits_var.get()),
+            "quality": quality_id,
+        }
+        self.on_save(self.result)
+        self.destroy()
 
 
 class ToolTip:
