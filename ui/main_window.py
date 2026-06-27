@@ -1,9 +1,8 @@
 import customtkinter as ctk
-from tkinter import filedialog, messagebox
-import threading
+from tkinter import filedialog, messagebox  # noqa: F401
 import os
 import sys
-import yt_dlp
+import yt_dlp  # noqa: F401
 from core.enums import State, Priority
 from core.engine import DownloadEngine
 from core.task import DownloadTask

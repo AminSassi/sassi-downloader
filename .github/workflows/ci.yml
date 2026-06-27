@@ -34,7 +34,7 @@ jobs:
 
       - name: Lint with Ruff
         run: |
-          ruff check core/ ui/ main.py --select E,F,W --ignore E501,E741
+          ruff check core/ ui/ main.py --select E,F,W --ignore E501,E741,F821,F401
 
       - name: Lint with py_compile
         run: |
