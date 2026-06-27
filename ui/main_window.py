@@ -415,6 +415,34 @@ class AddTaskDialog(ctk.CTkToplevel):
         self.destroy()
 
 
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        self.widget.bind("<Enter>", self._show)
+        self.widget.bind("<Leave>", self._hide)
+
+    def _show(self, event=None):
+        if self.tip_window or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+        self.tip_window = tw = ctk.CTkToplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        tw.configure(fg_color="#333333")
+        label = ctk.CTkLabel(tw, text=self.text, font=ctk.CTkFont(size=11),
+                              text_color="white", fg_color="#333333",
+                              padx=8, pady=4, wraplength=400, anchor="w", justify="left")
+        label.pack()
+
+    def _hide(self, event=None):
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+
+
 class DownloadRow(ctk.CTkFrame):
     def __init__(self, master, task, on_pause, on_cancel, **kwargs):
         super().__init__(master, fg_color=BG_CARD, corner_radius=6, height=52, **kwargs)
@@ -439,6 +467,7 @@ class DownloadRow(ctk.CTkFrame):
                                          font=ctk.CTkFont(size=12, weight="bold"),
                                          text_color=FG, anchor="w")
         self.title_label.pack(fill="x")
+        self._title_tooltip = None
 
         self.status_label = ctk.CTkLabel(info_frame, text="Waiting...",
                                            font=ctk.CTkFont(size=10),
@@ -514,7 +543,13 @@ class DownloadRow(ctk.CTkFrame):
         self._update_icons()
 
         if task.title:
-            self.title_label.configure(text=task.title[:50])
+            display_title = task.title[:50]
+            self.title_label.configure(text=display_title)
+            if len(task.title) > 50:
+                if self._title_tooltip:
+                    self._title_tooltip.text = task.title
+                else:
+                    self._title_tooltip = ToolTip(self.title_label, task.title)
 
         if task.state == State.DOWNLOADING:
             pct = task.progress / 100
@@ -590,10 +625,14 @@ class SassiDownloader:
         self._build()
         self._load_history()
 
-    def audit_log(self, message):
+    def audit_log(self, event_type, task_id=None, url="", folder="", outcome="", error=""):
         import time as _time
         timestamp = _time.strftime("%Y-%m-%d %H:%M:%S")
-        line = f"[{timestamp}] {message}\n"
+        safe_url = url[:80] if url else ""
+        line = f"[{timestamp}] {event_type} | id={task_id} | url={safe_url} | dir={folder} | outcome={outcome}"
+        if error:
+            line += f" | error={error[:100]}"
+        line += "\n"
         try:
             with open(AUDIT_LOG, "a", encoding="utf-8") as f:
                 f.write(line)
@@ -872,7 +911,7 @@ class SassiDownloader:
         task._on_update = lambda t: self.root.after(0, self._update_task, t)
         task._on_done = lambda t: self.root.after(0, self._done_task, t)
         task._on_error = lambda t: self.root.after(0, self._error_task, t)
-        self.audit_log(f"DOWNLOAD START: '{task.title or url}' -> {save_to} (quality={quality}, tag={tag})")
+        self.audit_log("DOWNLOAD_START", task.id, url, save_to, "queued")
         self._refresh_view()
 
     def _update_task(self, task):
@@ -888,7 +927,7 @@ class SassiDownloader:
             row.update_task(task)
         self.engine.ui_updater.cleanup(task.id)
         self.history.add(task.title, task.filename, task.filesize)
-        self.audit_log(f"DOWNLOAD COMPLETE: '{task.title}' ({fmt_size(task.filesize)})")
+        self.audit_log("DOWNLOAD_COMPLETE", task.id, task.url, task.folder, "success")
         self._refresh_view()
 
     def _error_task(self, task):
@@ -896,7 +935,7 @@ class SassiDownloader:
         if row:
             row.update_task(task)
         self.engine.ui_updater.cleanup(task.id)
-        self.audit_log(f"DOWNLOAD FAILED: '{task.title}' - {task.error[:80]}")
+        self.audit_log("DOWNLOAD_FAILED", task.id, task.url, task.folder, "error", task.error[:100])
         self._refresh_view()
 
     def _toggle_pause(self, task):
@@ -911,7 +950,13 @@ class SassiDownloader:
     def _cancel_task(self, task):
         if task.state in (State.COMPLETED, State.FAILED, State.CANCELLED):
             return
-        self.audit_log(f"CANCEL: '{task.title}' (state={task.state.value})")
+        if task.state == State.DOWNLOADING and (task.progress > 5 or task.downloaded > 5 * 1048576):
+            if not messagebox.askyesno("Cancel Download",
+                                        f"Cancel '{task.title[:40]}'?\n\n"
+                                        f"Progress: {task.progress:.0f}%\n"
+                                        f"Downloaded: {fmt_size(task.downloaded)}"):
+                return
+        self.audit_log("DOWNLOAD_CANCEL", task.id, task.url, task.folder, "cancelled")
         task.cancel()
         row = self.rows.get(task.id)
         if row:
@@ -925,10 +970,11 @@ class SassiDownloader:
         to_remove = [t for t in self.tasks if t.id in checked and t.state in (State.COMPLETED, State.FAILED, State.CANCELLED)]
         if not to_remove:
             return
-        if not messagebox.askyesno("Confirm Delete", f"Remove {len(to_remove)} download(s) from list?"):
+        msg = f"Remove {len(to_remove)} completed download(s) from the list?\n\nFiles on disk will NOT be deleted."
+        if not messagebox.askyesno("Confirm Delete", msg):
             return
         for task in to_remove:
-            self.audit_log(f"DELETE: '{task.title}' (state={task.state.value})")
+            self.audit_log("DELETE", task.id, task.url, task.folder, "removed_from_list")
             self.tasks.remove(task)
             self.rows.pop(task.id, None)
         self._refresh_view()

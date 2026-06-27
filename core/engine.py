@@ -169,6 +169,14 @@ class DownloadEngine:
 
             except yt_dlp.utils.DownloadCancelled:
                 return
+            except OSError as e:
+                import errno
+                if e.errno == errno.ENOSPC:
+                    task.state = State.FAILED
+                    task.error = "Download stopped: disk is full. Free some space and try again."
+                    self._safe_call(task._on_error, task)
+                    return
+                raise
             except Exception as e:
                 err_class = classify_error(str(e))
                 self.error_chain.record(task.host, err_class)
