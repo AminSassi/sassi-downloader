@@ -448,9 +448,46 @@ class AddTaskDialog(ctk.CTkToplevel):
                     self.after(0, lambda: self._cookie_status.configure(
                         text=f"{browser.title()} not logged in. Log in to Instagram first.", text_color=ORANGE))
             except Exception as err:
-                err_msg = str(err)[:50]
-                self.after(0, lambda m=err_msg: self._cookie_status.configure(
-                    text=f"Failed: {m}", text_color=RED))
+                err_msg = str(err).lower()
+                if 'cookie' in err_msg and ('copy' in err_msg or 'database' in err_msg or 'locked' in err_msg):
+                    fallback = "edge" if browser == "chrome" else "chrome"
+                    detected = self._detect_browsers()
+                    if fallback in [b.lower() for b in detected]:
+                        self.after(0, lambda: self._cookie_status.configure(
+                            text=f"{browser.title()} is locked. Trying {fallback.title()}...", text_color=ACCENT))
+                        self._import_cookies_from_direct(fallback)
+                        return
+                    self.after(0, lambda: self._cookie_status.configure(
+                        text=f"{browser.title()} is locked. Close it or try another browser.", text_color=ORANGE))
+                else:
+                    err_msg_short = str(err)[:50]
+                    self.after(0, lambda m=err_msg_short: self._cookie_status.configure(
+                        text=f"Failed: {m}", text_color=RED))
+
+        _threading.Thread(target=work, daemon=True).start()
+
+    def _import_cookies_from_direct(self, browser):
+        import threading as _threading
+        from core.engine import COOKIE_FILE
+
+        def work():
+            try:
+                import yt_dlp as _yt
+                o = {
+                    'quiet': True, 'no_warnings': True, 'skip_download': True,
+                    'cookiesfrombrowser': (browser,),
+                }
+                with _yt.YoutubeDL(o) as y:
+                    y.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
+                if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 50:
+                    self.after(0, lambda: self._cookie_status.configure(
+                        text=f"{browser.title()} login imported!", text_color=GREEN))
+                else:
+                    self.after(0, lambda: self._cookie_status.configure(
+                        text=f"{browser.title()} not logged in.", text_color=ORANGE))
+            except Exception:
+                self.after(0, lambda: self._cookie_status.configure(
+                    text=f"{browser.title()} unavailable. Try logging in.", text_color=ORANGE))
 
         _threading.Thread(target=work, daemon=True).start()
 
