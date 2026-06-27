@@ -45,8 +45,10 @@ def fmt_size(b):
         return f"{b / 1024:.0f} KB"
     elif b < 1073741824:
         return f"{b / 1048576:.1f} MB"
-    else:
+    elif b < 1099511627776:
         return f"{b / 1073741824:.2f} GB"
+    else:
+        return f"{b / 1099511627776:.2f} TB"
 
 
 def fmt_speed(b):
@@ -57,8 +59,10 @@ def fmt_speed(b):
         return f"{b / 1024:.0f} KB/s"
     elif b < 1073741824:
         return f"{b / 1048576:.1f} MB/s"
-    else:
+    elif b < 1099511627776:
         return f"{b / 1073741824:.2f} GB/s"
+    else:
+        return f"{b / 1099511627776:.2f} TB/s"
 
 
 class SidebarItem(ctk.CTkFrame):
@@ -384,8 +388,10 @@ class AddTaskDialog(ctk.CTkToplevel):
         if not url:
             messagebox.showwarning("Missing URL", "Please enter a URL")
             return
-        if not url.startswith(('http://', 'https://', 'ftp://')):
-            messagebox.showwarning("Invalid URL", "URL must start with http://, https://, or ftp://")
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if parsed.scheme not in ('http', 'https', 'ftp') or not parsed.netloc:
+            messagebox.showwarning("Invalid URL", "Please enter a valid URL with a domain (e.g. https://youtube.com/watch?v=...)")
             return
 
         quality_id = "best"
