@@ -1,10 +1,10 @@
 import customtkinter as ctk
 import os
 import sys
-from ui.main_window import SassiDownloader
 
 
 def main():
+    from ui.main_window import SassiDownloader
     root = ctk.CTk()
     icon_path = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "icon.ico")
     if not os.path.exists(icon_path):

@@ -571,8 +571,7 @@ class SassiDownloader:
 
         btn_style = {"width": 32, "height": 32, "corner_radius": 6,
                       "fg_color": BG_CARD, "hover_color": "#E8E8E8",
-                      "border_width": 1, "border_color": BORDER,
-                      "text_color": FG}
+                      "border_width": 1, "border_color": BORDER}
 
         ctk.CTkButton(right_header, text="+", font=ctk.CTkFont(size=16, weight="bold"),
                        text_color=ACCENT, command=self._add_task, **btn_style).pack(side="left", padx=(0, 4))
