@@ -44,51 +44,18 @@ def resource_path(filename):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', filename)
 
 
-def show_help_image(title, image_filename):
-    try:
-        from PIL import Image, ImageTk
-    except ImportError:
-        messagebox.showinfo(title, "Install Pillow to view images: pip install Pillow")
-        return
+_help_windows = []
 
+
+def show_help_image(title, image_filename):
     path = resource_path(image_filename)
     if not os.path.exists(path):
-        messagebox.showwarning("Instructions Not Found",
-                                f"The help image could not be found.\n\nPlease place '{image_filename}' next to Sassi Downloader.exe")
+        path = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), image_filename)
+    if not os.path.exists(path):
+        messagebox.showinfo(title, "Export cookies from Chrome:\n\n1. Install 'Get cookies.txt LOCALLY' extension\n2. Go to instagram.com (logged in)\n3. Click extension > Export > Save as cookies.txt\n4. Click 'Browse Cookies File' in the download dialog")
         return
-
-    try:
-        img = Image.open(path)
-    except Exception:
-        messagebox.showwarning("Error", "Could not load the help image.")
-        return
-
-    win = ctk.CTkToplevel()
-    win.title(title)
-    win.configure(fg_color="#FFFFFF")
-    win.protocol("WM_DELETE_WINDOW", win.destroy)
-
-    sw = win.winfo_screenwidth()
-    sh = win.winfo_screenheight()
-    win_w = min(900, sw - 100)
-    win_h = min(700, sh - 100)
-    win.geometry(f"{win_w}x{win_h}+{(sw - win_w) // 2}+{(sh - win_h) // 2}")
-
-    img_w, img_h = img.size
-    scale = min((win_w - 20) / img_w, (win_h - 20) / img_h, 1.0)
-    new_w = int(img_w * scale)
-    new_h = int(img_h * scale)
-    img = img.resize((new_w, new_h), Image.LANCZOS)
-
-    frame = ctk.CTkFrame(win, fg_color="#FFFFFF")
-    frame.pack(fill="both", expand=True)
-
-    canvas = ctk.CTkCanvas(frame, bg="#FFFFFF", highlightthickness=0, width=new_w, height=new_h)
-    canvas.pack(expand=True)
-
-    photo = ImageTk.PhotoImage(img)
-    canvas.create_image(new_w // 2, new_h // 2, image=photo, anchor="center")
-    canvas.image = photo
+    import subprocess
+    os.startfile(path)
 
 
 def fmt_size(b):
@@ -304,15 +271,31 @@ class AddTaskDialog(ctk.CTkToplevel):
         cookie_frame = ctk.CTkFrame(self, fg_color="transparent")
         cookie_frame.pack(fill="x", padx=20, pady=(10, 0))
 
-        self._cookie_status = ctk.CTkLabel(cookie_frame, text="", font=ctk.CTkFont(size=10), text_color=FG_DIM)
+        from core.cookies import CookieManager, PLATFORMS
+        self._cookie_mgr = CookieManager()
+
+        status_items = self._cookie_mgr.get_status()
+        imported = [s for s, st in status_items if st == "Imported"]
+        missing = [s for s, st in status_items if st == "Not configured"]
+
+        if imported:
+            self._cookie_status = ctk.CTkLabel(cookie_frame,
+                                                  text=f"Login imported ({', '.join(imported)})",
+                                                  font=ctk.CTkFont(size=10, weight="bold"),
+                                                  text_color=GREEN)
+        else:
+            self._cookie_status = ctk.CTkLabel(cookie_frame,
+                                                  text="No logins imported",
+                                                  font=ctk.CTkFont(size=10),
+                                                  text_color=ORANGE)
         self._cookie_status.pack(side="left")
 
-        ctk.CTkButton(cookie_frame, text="Browse Cookies File", width=140, height=26,
+        ctk.CTkButton(cookie_frame, text="Import Cookies", width=110, height=26,
                        fg_color=ACCENT, hover_color="#2563EB", text_color="white",
                        font=ctk.CTkFont(size=10, weight="bold"),
-                       command=self._browse_cookies).pack(side="right", padx=(4, 0))
+                       command=self._import_cookies).pack(side="right", padx=(4, 0))
 
-        ctk.CTkButton(cookie_frame, text="Instructions", width=90, height=26,
+        ctk.CTkButton(cookie_frame, text="How?", width=40, height=26,
                        fg_color=BG_INPUT, hover_color=BORDER, text_color=ACCENT,
                        font=ctk.CTkFont(size=10),
                        command=lambda: show_help_image("How to Export Cookies", "instagram_help.png")).pack(side="right", padx=(4, 0))
@@ -428,16 +411,25 @@ class AddTaskDialog(ctk.CTkToplevel):
 
         _threading.Thread(target=work, daemon=True).start()
 
-    def _browse_cookies(self):
-        from core.engine import COOKIE_FILE
+    def _import_cookies(self):
         path = filedialog.askopenfilename(
-            title="Select Cookies File (export from browser extension)",
-            filetypes=[("Netscape Cookie File", "*.txt"), ("All Files", "*.*")]
+            title="Select cookies.txt file (export from browser)",
+            filetypes=[("Cookie File", "*.txt"), ("All Files", "*.*")]
         )
-        if path:
-            import shutil
-            shutil.copy2(path, COOKIE_FILE)
-            self._cookie_status.configure(text="Cookies loaded!", text_color=GREEN)
+        if not path:
+            return
+        ok, result = self._cookie_mgr.import_file(path)
+        if ok and isinstance(result, list):
+            imported = result
+            msg = "Imported logins:\n"
+            for site, status in imported:
+                icon = "\u2713" if status == "complete" else "\u26a0"
+                msg += f"  {icon} {site} ({status})\n"
+            msg += "\nOriginal cookies.txt can be deleted."
+            self._cookie_status.configure(text=f"Login imported ({', '.join(s for s, _ in imported)})", text_color=GREEN)
+            messagebox.showinfo("Cookies Imported", msg)
+        else:
+            messagebox.showwarning("Import Failed", str(result))
 
     def _save(self):
         url = self.url_entry.get().strip()

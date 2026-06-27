@@ -7,6 +7,9 @@ from .enums import State, ErrorClass, classify_error
 from .cache import ServerCache, ErrorChain
 from .verifier import ChunkVerifier, IntegrityValidator
 from .scheduler import AdaptiveConcurrency, HostLimiter, UIUpdater, BandwidthScheduler
+from .cookies import CookieManager
+
+COOKIE_MANAGER = CookieManager()
 
 COOKIE_FILE = os.path.join(os.path.expanduser("~"), ".sassi_cookies.txt")
 
@@ -190,6 +193,10 @@ class DownloadEngine:
                     opts['merge_output_format'] = 'mp4'
                 if os.path.exists(COOKIE_FILE):
                     opts['cookiefile'] = COOKIE_FILE
+                else:
+                    stored = COOKIE_MANAGER.get_best_cookie_file(task.url)
+                    if stored:
+                        opts['cookiefile'] = stored
                 splits = getattr(task, 'splits', 32)
                 if stream_count > 1:
                     opts['concurrent_fragment_downloads'] = min(stream_count, max(1, splits // 8))
@@ -244,12 +251,7 @@ class DownloadEngine:
                 self.error_chain.record(task.host, err_class)
                 if err_class in (ErrorClass.AUTH, ErrorClass.PERMANENT):
                     task.state = State.FAILED
-                    if is_auth and 'instagram' in err_msg:
-                        task.error = "Instagram requires login. Click 'Use Browser Login' in the dialog."
-                    elif is_auth:
-                        task.error = "Site requires login. Try importing browser cookies."
-                    else:
-                        task.error = str(e)[:120]
+                    task.error = self._friendly_error(err_msg, task.url)
                     task.error_class = err_class
                     self._safe_call(task._on_error, task)
                     return
@@ -289,6 +291,26 @@ class DownloadEngine:
         if task.quality == "best":
             return "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
         return f"{task.quality}+bestaudio/best"
+
+    def _friendly_error(self, err_msg, url=""):
+        url_lower = url.lower()
+        if "empty response" in err_msg or "empty media" in err_msg:
+            if "instagram" in url_lower:
+                return "Instagram login may have expired. Re-import your cookies."
+            return "Server returned an empty response. The content may be private or removed."
+        if "rate limit" in err_msg or "429" in err_msg or "too many" in err_msg:
+            return "Rate limited by the server. Wait a few minutes and try again."
+        if "403" in err_msg or "forbidden" in err_msg:
+            return "Access denied. You may need to import cookies for this site."
+        if "404" in err_msg or "not found" in err_msg:
+            return "Content not found. The URL may be incorrect or the post was deleted."
+        if "login" in err_msg or "sign in" in err_msg or "unauthorized" in err_msg:
+            return "Login required. Import cookies from your browser for this site."
+        if "network" in err_msg or "timeout" in err_msg or "connection" in err_msg:
+            return "Network error. Check your connection and try again."
+        if "private" in err_msg:
+            return "This content is private. Log in and import cookies."
+        return str(e)[:120]
 
     def _safe_call(self, fn, *args):
         if fn:
