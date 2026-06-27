@@ -10,6 +10,7 @@ from core.task import DownloadTask
 from core.history import AtomicHistory
 
 HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".sassi_history.json")
+AUDIT_LOG = os.path.join(os.path.expanduser("~"), ".sassi_audit.log")
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
@@ -589,6 +590,16 @@ class SassiDownloader:
         self._build()
         self._load_history()
 
+    def audit_log(self, message):
+        import time as _time
+        timestamp = _time.strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{timestamp}] {message}\n"
+        try:
+            with open(AUDIT_LOG, "a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            pass
+
     def _default_path(self):
         if sys.platform == "win32":
             import winreg
@@ -858,6 +869,10 @@ class SassiDownloader:
         task._on_error = lambda t: self.root.after(0, self._error_task, t)
         self.tasks.append(task)
         self.engine.add(task)
+        task._on_update = lambda t: self.root.after(0, self._update_task, t)
+        task._on_done = lambda t: self.root.after(0, self._done_task, t)
+        task._on_error = lambda t: self.root.after(0, self._error_task, t)
+        self.audit_log(f"DOWNLOAD START: '{task.title or url}' -> {save_to} (quality={quality}, tag={tag})")
         self._refresh_view()
 
     def _update_task(self, task):
@@ -873,6 +888,7 @@ class SassiDownloader:
             row.update_task(task)
         self.engine.ui_updater.cleanup(task.id)
         self.history.add(task.title, task.filename, task.filesize)
+        self.audit_log(f"DOWNLOAD COMPLETE: '{task.title}' ({fmt_size(task.filesize)})")
         self._refresh_view()
 
     def _error_task(self, task):
@@ -880,6 +896,7 @@ class SassiDownloader:
         if row:
             row.update_task(task)
         self.engine.ui_updater.cleanup(task.id)
+        self.audit_log(f"DOWNLOAD FAILED: '{task.title}' - {task.error[:80]}")
         self._refresh_view()
 
     def _toggle_pause(self, task):
@@ -894,6 +911,7 @@ class SassiDownloader:
     def _cancel_task(self, task):
         if task.state in (State.COMPLETED, State.FAILED, State.CANCELLED):
             return
+        self.audit_log(f"CANCEL: '{task.title}' (state={task.state.value})")
         task.cancel()
         row = self.rows.get(task.id)
         if row:
@@ -905,7 +923,12 @@ class SassiDownloader:
         if not checked:
             checked = [t.id for t in self.tasks if t.state in (State.COMPLETED, State.FAILED, State.CANCELLED)]
         to_remove = [t for t in self.tasks if t.id in checked and t.state in (State.COMPLETED, State.FAILED, State.CANCELLED)]
+        if not to_remove:
+            return
+        if not messagebox.askyesno("Confirm Delete", f"Remove {len(to_remove)} download(s) from list?"):
+            return
         for task in to_remove:
+            self.audit_log(f"DELETE: '{task.title}' (state={task.state.value})")
             self.tasks.remove(task)
             self.rows.pop(task.id, None)
         self._refresh_view()
