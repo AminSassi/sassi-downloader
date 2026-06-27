@@ -241,8 +241,22 @@ class AddTaskDialog(ctk.CTkToplevel):
                                               font=ctk.CTkFont(size=11))
         self.splits_menu.pack(side="left", padx=(4, 0))
 
+        cookie_frame = ctk.CTkFrame(self, fg_color="transparent")
+        cookie_frame.pack(fill="x", padx=20, pady=(10, 0))
+
+        self._cookie_status = ctk.CTkLabel(cookie_frame, text="", font=ctk.CTkFont(size=10), text_color=FG_DIM)
+        self._cookie_status.pack(side="left")
+
+        ctk.CTkButton(cookie_frame, text="Import from Browser", width=140, height=26,
+                       fg_color=BG_INPUT, hover_color=BORDER, text_color=ACCENT,
+                       font=ctk.CTkFont(size=10), command=self._import_cookies).pack(side="right", padx=(4, 0))
+
+        ctk.CTkButton(cookie_frame, text="Browse Cookies File", width=120, height=26,
+                       fg_color=BG_INPUT, hover_color=BORDER, text_color=ACCENT,
+                       font=ctk.CTkFont(size=10), command=self._browse_cookies).pack(side="right")
+
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=20, pady=(16, 16))
+        btn_frame.pack(fill="x", padx=20, pady=(12, 16))
 
         ctk.CTkButton(btn_frame, text="Cancel", width=100, height=34,
                        fg_color=BG_INPUT, hover_color=BORDER, text_color=FG,
@@ -318,6 +332,50 @@ class AddTaskDialog(ctk.CTkToplevel):
         if path:
             self.save_entry.delete(0, "end")
             self.save_entry.insert(0, path)
+
+    def _import_cookies(self):
+        import threading as _threading
+        from core.engine import COOKIE_FILE
+
+        def work():
+            try:
+                self.after(0, lambda: self._cookie_status.configure(text="Importing from Chrome...", text_color=ACCENT))
+                import yt_dlp as _yt
+                o = {'quiet': True, 'no_warnings': True, 'skip_download': True, 'cookiefile': COOKIE_FILE}
+                try:
+                    with _yt.YoutubeDL(o) as y:
+                        y.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
+                except:
+                    pass
+                try:
+                    import subprocess
+                    result = subprocess.run(
+                        ['yt-dlp', '--cookies-from-browser', 'chrome', '--cookies', COOKIE_FILE,
+                         '--skip-download', '-o', 'test', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'],
+                        capture_output=True, timeout=30, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+                    )
+                except:
+                    pass
+                if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 50:
+                    self.after(0, lambda: self._cookie_status.configure(text="Cookies imported!", text_color=GREEN))
+                else:
+                    self.after(0, lambda: self._cookie_status.configure(
+                        text="Chrome not found. Try Edge/Firefox or export cookies manually.", text_color=ORANGE))
+            except Exception as e:
+                self.after(0, lambda: self._cookie_status.configure(text=f"Error: {str(e)[:40]}", text_color=RED))
+
+        _threading.Thread(target=work, daemon=True).start()
+
+    def _browse_cookies(self):
+        from core.engine import COOKIE_FILE
+        path = filedialog.askopenfilename(
+            title="Select Cookies File",
+            filetypes=[("Netscape Cookie File", "*.txt"), ("All Files", "*.*")]
+        )
+        if path:
+            import shutil
+            shutil.copy2(path, COOKIE_FILE)
+            self._cookie_status.configure(text="Cookies loaded!", text_color=GREEN)
 
     def _save(self):
         url = self.url_entry.get().strip()

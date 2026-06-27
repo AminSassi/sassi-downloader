@@ -8,6 +8,8 @@ from .verifier import ChunkVerifier, IntegrityValidator
 from .scheduler import AdaptiveConcurrency, HostLimiter, UIUpdater, BandwidthScheduler
 from .task import DownloadTask
 
+COOKIE_FILE = os.path.join(os.path.expanduser("~"), ".sassi_cookies.txt")
+
 
 class DownloadEngine:
     def __init__(self):
@@ -113,7 +115,17 @@ class DownloadEngine:
                     'quiet': True, 'no_warnings': True,
                     'continuedl': True, 'socket_timeout': 20,
                     'merge_output_format': 'mp4', 'http_chunk_size': 1048576,
+                    'extractor_retries': 3,
+                    'retries': 3,
+                    'fragment_retries': 3,
+                    'http_headers': {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                    },
                 }
+                if os.path.exists(COOKIE_FILE):
+                    opts['cookiefile'] = COOKIE_FILE
                 splits = getattr(task, 'splits', 32)
                 if stream_count > 1:
                     opts['concurrent_fragment_downloads'] = min(stream_count, max(1, splits // 8))
