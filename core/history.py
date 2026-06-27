@@ -13,7 +13,7 @@ class AtomicHistory:
         try:
             with open(self.path, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except:
+        except Exception:
             return []
 
     def add(self, title, path, size=0, checksum=""):
@@ -35,7 +35,7 @@ class AtomicHistory:
             if os.name == 'nt' and os.path.exists(self.path):
                 os.remove(self.path)
             os.rename(tmp, self.path)
-        except:
+        except Exception:
             pass
 
     def clear(self):

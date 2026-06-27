@@ -85,7 +85,10 @@ class DownloadEngine:
                         raise yt_dlp.utils.DownloadCancelled()
                     if d['status'] == 'downloading':
                         task.state = State.DOWNLOADING
-                        task.progress = float(d.get('_percent_str', '0').replace('%', '').strip() or 0)
+                        try:
+                            task.progress = float(d.get('_percent_str', '0').replace('%', '').strip() or 0)
+                        except (ValueError, TypeError):
+                            pass
                         task.speed = d.get('_speed', 0) or 0
                         task.eta = d.get('_eta_str', '').strip()
                         task.downloaded = d.get('downloaded_bytes', 0) or 0
@@ -133,6 +136,8 @@ class DownloadEngine:
                 start_time = time.time()
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(task.url, download=True)
+                    if info is None:
+                        raise Exception("Failed to extract video info")
                     task.title = info.get('title', 'video')
                     task.filename = ydl.prepare_filename(info)
                     task.filesize = info.get('filesize', 0) or 0
@@ -207,5 +212,5 @@ class DownloadEngine:
         if fn:
             try:
                 fn(*args)
-            except:
+            except Exception:
                 pass

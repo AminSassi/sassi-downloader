@@ -55,12 +55,13 @@ CACHE_FILE = os.path.join(os.path.expanduser("~"), ".sassi_server_cache.json")
 class ServerCache:
     def __init__(self):
         self._data = self._load()
+        self._lock = threading.Lock()
 
     def _load(self):
         try:
             with open(CACHE_FILE, 'r') as f:
                 return json.load(f)
-        except:
+        except Exception:
             return {}
 
     def _save(self):
@@ -72,7 +73,7 @@ class ServerCache:
             if os.name == 'nt' and os.path.exists(CACHE_FILE):
                 os.remove(CACHE_FILE)
             os.rename(tmp, CACHE_FILE)
-        except:
+        except Exception:
             pass
 
     def _default_profile(self):
@@ -87,39 +88,41 @@ class ServerCache:
         return time.time() - profile.get("last_update", 0) > CACHE_TTL
 
     def get_profile(self, host):
-        p = self._data.get(host, self._default_profile())
-        if self._is_stale(p):
-            p["confidence"] *= 0.7
-            p["samples"] = max(1, p["samples"] // 2)
-            p["last_update"] = time.time()
-            self._data[host] = p
-        return p
+        with self._lock:
+            p = self._data.get(host, self._default_profile())
+            if self._is_stale(p):
+                p["confidence"] *= 0.7
+                p["samples"] = max(1, p["samples"] // 2)
+                p["last_update"] = time.time()
+                self._data[host] = p
+            return p
 
     def update(self, host, speed_bps, latency_ms=None, range_ok=True, success=True):
-        p = self._data.get(host, self._default_profile())
-        n = p["samples"]
-        if success:
-            p["avg_speed_bps"] = (p["avg_speed_bps"] * n + speed_bps) / (n + 1)
-            if latency_ms is not None:
-                p["avg_latency_ms"] = (p["avg_latency_ms"] * n + latency_ms) / (n + 1)
-            p["samples"] = min(n + 1, 100)
-            gap = 1.0 - p["confidence"]
-            p["confidence"] = min(1.0, p["confidence"] + gap * 0.3 + 0.02)
-            p["failures"] = 0
-            if p["avg_speed_bps"] > 1000000:
-                p["optimal_streams"] = min(p["optimal_streams"] + 1, 8)
-            elif p["avg_speed_bps"] < 100000:
-                p["optimal_streams"] = max(p["optimal_streams"] - 1, 1)
-        else:
-            p["failures"] += 1
-            p["confidence"] *= CONFIDENCE_DECAY
-            if p["failures"] >= 3:
-                p["optimal_streams"] = max(1, p["optimal_streams"] - 1)
-        p["range_support"] = range_ok
-        p["last_update"] = time.time()
-        self._data[host] = p
-        self._save()
-        return p
+        with self._lock:
+            p = self._data.get(host, self._default_profile())
+            n = p["samples"]
+            if success:
+                p["avg_speed_bps"] = (p["avg_speed_bps"] * n + speed_bps) / (n + 1)
+                if latency_ms is not None:
+                    p["avg_latency_ms"] = (p["avg_latency_ms"] * n + latency_ms) / (n + 1)
+                p["samples"] = min(n + 1, 100)
+                gap = 1.0 - p["confidence"]
+                p["confidence"] = min(1.0, p["confidence"] + gap * 0.3 + 0.02)
+                p["failures"] = 0
+                if p["avg_speed_bps"] > 1000000:
+                    p["optimal_streams"] = min(p["optimal_streams"] + 1, 8)
+                elif p["avg_speed_bps"] < 100000:
+                    p["optimal_streams"] = max(p["optimal_streams"] - 1, 1)
+            else:
+                p["failures"] += 1
+                p["confidence"] *= CONFIDENCE_DECAY
+                if p["failures"] >= 3:
+                    p["optimal_streams"] = max(1, p["optimal_streams"] - 1)
+            p["range_support"] = range_ok
+            p["last_update"] = time.time()
+            self._data[host] = p
+            self._save()
+            return p
 
     def get_optimal_streams(self, host):
         p = self.get_profile(host)

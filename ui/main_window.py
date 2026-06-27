@@ -38,6 +38,7 @@ TAG_COLORS = {
 
 
 def fmt_size(b):
+    b = max(0, int(b))
     if b < 1024:
         return f"{b} B"
     elif b < 1048576:
@@ -49,6 +50,7 @@ def fmt_size(b):
 
 
 def fmt_speed(b):
+    b = max(0, b)
     if b < 1024:
         return f"{b:.0f} B/s"
     elif b < 1048576:
@@ -308,7 +310,7 @@ class AddTaskDialog(ctk.CTkToplevel):
                         if h not in seen_heights:
                             seen_heights.add(h)
                             fmts.append((label, f['format_id']))
-                fmts.sort(key=lambda x: int(x[0].split('p')[0]) if x[1] != "best" else 99999, reverse=True)
+                fmts.sort(key=lambda x: int(float(x[0].split('p')[0])) if x[1] != "best" else 99999, reverse=True)
                 self.formats = fmts
                 self.after(0, self._fetch_ok, len(fmts) - 1)
             except Exception as e:
@@ -587,7 +589,7 @@ class SassiDownloader:
                 p = winreg.QueryValueEx(k, "{374DE290-123F-4565-9164-39C4925E467B}")[0]
                 winreg.CloseKey(k)
                 return p
-            except:
+            except Exception:
                 pass
         return os.path.join(os.path.expanduser("~"), "Downloads")
 
@@ -740,6 +742,7 @@ class SassiDownloader:
             task.filesize = item.get('size', 0)
             task.filename = item.get('path', '')
             task.progress = 100
+            task.tag = "Other"
             self.tasks.append(task)
         self._refresh_view()
 
@@ -836,11 +839,11 @@ class SassiDownloader:
         task.tag = tag
         task.rename = rename
         task.splits = splits
-        self.tasks.append(task)
-        self.engine.add(task)
         task._on_update = lambda t: self.root.after(0, self._update_task, t)
         task._on_done = lambda t: self.root.after(0, self._done_task, t)
         task._on_error = lambda t: self.root.after(0, self._error_task, t)
+        self.tasks.append(task)
+        self.engine.add(task)
         self._refresh_view()
 
     def _update_task(self, task):
@@ -884,10 +887,10 @@ class SassiDownloader:
         self.engine.ui_updater.cleanup(task.id)
 
     def _delete_selected(self):
-        to_remove = []
-        for task in self.tasks:
-            if task.state in (State.COMPLETED, State.FAILED, State.CANCELLED):
-                to_remove.append(task)
+        checked = [tid for tid, row in self.rows.items() if row.checkbox_var.get()]
+        if not checked:
+            checked = [t.id for t in self.tasks if t.state in (State.COMPLETED, State.FAILED, State.CANCELLED)]
+        to_remove = [t for t in self.tasks if t.id in checked and t.state in (State.COMPLETED, State.FAILED, State.CANCELLED)]
         for task in to_remove:
             self.tasks.remove(task)
             self.rows.pop(task.id, None)
